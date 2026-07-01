@@ -1,0 +1,248 @@
+Progress Logs
+-------------
+Sensors With Data in Time Range: 26
+Sensors Without Data in Time Range: 3
+
+Sensors Not Found: 0
+Invalid Sensor Indexes: 0
+Sensor Indexes Encountering Other Errors: 0
+Sensor Indexes Not Processed: 0
+
+Start Timestamp: 2023-01-01T00:00:00-07:00
+End Timestamp: 2023-12-31T00:00:00-07:00
+Average: 60
+Fields: pm2.5_atm
+Total Data Rows Downloaded: 204731
+
+Number of Sensors: 29
+Number of Read Keys: 0
+
+Download Started at: 2026-06-29T16:36:20-04:00
+Download Ended   at: 2026-06-29T16:39:36-04:00
+Download Took: 3.3 minutes
+
+-------------
+Sensor Indexes Not Found:
+
+
+Invalid Sensor Indexes:
+
+
+Sensors Without Any Data For Specified Time Period:
+133107
+143464
+283804
+
+Sensors Where No Download Was Attempted Yet Due to Process Being Aborted:
+
+
+Aborted on Sensors:
+
+
+Sensors With Number of Downloaded Data Rows:
+65669 : 8736 data rows
+92321 : 8736 data rows
+120859 : 8736 data rows
+121721 : 7545 data rows
+124223 : 8736 data rows
+124291 : 8502 data rows
+125725 : 2417 data rows
+128465 : 8736 data rows
+129117 : 8736 data rows
+129243 : 8528 data rows
+129263 : 8734 data rows
+129281 : 8736 data rows
+129587 : 8718 data rows
+129637 : 8393 data rows
+129735 : 8731 data rows
+130313 : 8683 data rows
+130329 : 8472 data rows
+131279 : 7716 data rows
+131967 : 8736 data rows
+133131 : 7955 data rows
+133319 : 7862 data rows
+144040 : 8736 data rows
+146510 : 8735 data rows
+147456 : 4864 data rows
+175953 : 5284 data rows
+180637 : 4968 data rows
+  
+
+-------------
+Starting requests for sensor 283804.
+Making request 1 from 2023-01-01 to 2023-06-30
+Making request 2 from 2023-06-30 to 2023-12-27
+Making request 3 from 2023-12-27 to 2023-12-31
+No data was found for sensor 283804 between 2023-01-01T00:00:00-07:00 and 2023-12-31T00:00:00-07:00.
+
+Starting requests for sensor 130313.
+Making request 4 from 2023-01-01 to 2023-06-30
+Making request 5 from 2023-06-30 to 2023-12-27
+Making request 6 from 2023-12-27 to 2023-12-31
+Data download completed for sensor 130313. Downloaded 8683 rows of data.
+
+Starting requests for sensor 124223.
+Making request 7 from 2023-01-01 to 2023-06-30
+Making request 8 from 2023-06-30 to 2023-12-27
+Making request 9 from 2023-12-27 to 2023-12-31
+Data download completed for sensor 124223. Downloaded 8736 rows of data.
+
+Starting requests for sensor 175953.
+Making request 10 from 2023-01-01 to 2023-06-30
+Making request 11 from 2023-06-30 to 2023-12-27
+Making request 12 from 2023-12-27 to 2023-12-31
+Data download completed for sensor 175953. Downloaded 5284 rows of data.
+
+Starting requests for sensor 133131.
+Making request 13 from 2023-01-01 to 2023-06-30
+Making request 14 from 2023-06-30 to 2023-12-27
+Making request 15 from 2023-12-27 to 2023-12-31
+Data download completed for sensor 133131. Downloaded 7955 rows of data.
+
+Starting requests for sensor 125725.
+Making request 16 from 2023-01-01 to 2023-06-30
+Making request 17 from 2023-06-30 to 2023-12-27
+Making request 18 from 2023-12-27 to 2023-12-31
+Data download completed for sensor 125725. Downloaded 2417 rows of data.
+
+Starting requests for sensor 147456.
+Making request 19 from 2023-01-01 to 2023-06-30
+Making request 20 from 2023-06-30 to 2023-12-27
+Making request 21 from 2023-12-27 to 2023-12-31
+Data download completed for sensor 147456. Downloaded 4864 rows of data.
+
+Starting requests for sensor 146510.
+Making request 22 from 2023-01-01 to 2023-06-30
+Making request 23 from 2023-06-30 to 2023-12-27
+Making request 24 from 2023-12-27 to 2023-12-31
+Data download completed for sensor 146510. Downloaded 8735 rows of data.
+
+Starting requests for sensor 65669.
+Making request 25 from 2023-01-01 to 2023-06-30
+Making request 26 from 2023-06-30 to 2023-12-27
+Making request 27 from 2023-12-27 to 2023-12-31
+Data download completed for sensor 65669. Downloaded 8736 rows of data.
+
+Starting requests for sensor 92321.
+Making request 28 from 2023-01-01 to 2023-06-30
+Making request 29 from 2023-06-30 to 2023-12-27
+Making request 30 from 2023-12-27 to 2023-12-31
+Data download completed for sensor 92321. Downloaded 8736 rows of data.
+
+Starting requests for sensor 129735.
+Making request 31 from 2023-01-01 to 2023-06-30
+Making request 32 from 2023-06-30 to 2023-12-27
+Making request 33 from 2023-12-27 to 2023-12-31
+Data download completed for sensor 129735. Downloaded 8731 rows of data.
+
+Starting requests for sensor 129637.
+Making request 34 from 2023-01-01 to 2023-06-30
+Making request 35 from 2023-06-30 to 2023-12-27
+Making request 36 from 2023-12-27 to 2023-12-31
+Data download completed for sensor 129637. Downloaded 8393 rows of data.
+
+Starting requests for sensor 129117.
+Making request 37 from 2023-01-01 to 2023-06-30
+Making request 38 from 2023-06-30 to 2023-12-27
+Making request 39 from 2023-12-27 to 2023-12-31
+Data download completed for sensor 129117. Downloaded 8736 rows of data.
+
+Starting requests for sensor 120859.
+Making request 40 from 2023-01-01 to 2023-06-30
+Making request 41 from 2023-06-30 to 2023-12-27
+Making request 42 from 2023-12-27 to 2023-12-31
+Data download completed for sensor 120859. Downloaded 8736 rows of data.
+
+Starting requests for sensor 130329.
+Making request 43 from 2023-01-01 to 2023-06-30
+Making request 44 from 2023-06-30 to 2023-12-27
+Making request 45 from 2023-12-27 to 2023-12-31
+Data download completed for sensor 130329. Downloaded 8472 rows of data.
+
+Starting requests for sensor 131967.
+Making request 46 from 2023-01-01 to 2023-06-30
+Making request 47 from 2023-06-30 to 2023-12-27
+Making request 48 from 2023-12-27 to 2023-12-31
+Data download completed for sensor 131967. Downloaded 8736 rows of data.
+
+Starting requests for sensor 131279.
+Making request 49 from 2023-01-01 to 2023-06-30
+Making request 50 from 2023-06-30 to 2023-12-27
+Making request 51 from 2023-12-27 to 2023-12-31
+Data download completed for sensor 131279. Downloaded 7716 rows of data.
+
+Starting requests for sensor 129587.
+Making request 52 from 2023-01-01 to 2023-06-30
+Making request 53 from 2023-06-30 to 2023-12-27
+Making request 54 from 2023-12-27 to 2023-12-31
+Data download completed for sensor 129587. Downloaded 8718 rows of data.
+
+Starting requests for sensor 144040.
+Making request 55 from 2023-01-01 to 2023-06-30
+Making request 56 from 2023-06-30 to 2023-12-27
+Making request 57 from 2023-12-27 to 2023-12-31
+Data download completed for sensor 144040. Downloaded 8736 rows of data.
+
+Starting requests for sensor 124291.
+Making request 58 from 2023-01-01 to 2023-06-30
+Making request 59 from 2023-06-30 to 2023-12-27
+Making request 60 from 2023-12-27 to 2023-12-31
+Data download completed for sensor 124291. Downloaded 8502 rows of data.
+
+Starting requests for sensor 129281.
+Making request 61 from 2023-01-01 to 2023-06-30
+Making request 62 from 2023-06-30 to 2023-12-27
+Making request 63 from 2023-12-27 to 2023-12-31
+Data download completed for sensor 129281. Downloaded 8736 rows of data.
+
+Starting requests for sensor 129243.
+Making request 64 from 2023-01-01 to 2023-06-30
+Making request 65 from 2023-06-30 to 2023-12-27
+Making request 66 from 2023-12-27 to 2023-12-31
+Data download completed for sensor 129243. Downloaded 8528 rows of data.
+
+Starting requests for sensor 129263.
+Making request 67 from 2023-01-01 to 2023-06-30
+Making request 68 from 2023-06-30 to 2023-12-27
+Making request 69 from 2023-12-27 to 2023-12-31
+Data download completed for sensor 129263. Downloaded 8734 rows of data.
+
+Starting requests for sensor 180637.
+Making request 70 from 2023-01-01 to 2023-06-30
+Making request 71 from 2023-06-30 to 2023-12-27
+Making request 72 from 2023-12-27 to 2023-12-31
+Data download completed for sensor 180637. Downloaded 4968 rows of data.
+
+Starting requests for sensor 143464.
+Making request 73 from 2023-01-01 to 2023-06-30
+Making request 74 from 2023-06-30 to 2023-12-27
+Making request 75 from 2023-12-27 to 2023-12-31
+No data was found for sensor 143464 between 2023-01-01T00:00:00-07:00 and 2023-12-31T00:00:00-07:00.
+
+Starting requests for sensor 121721.
+Making request 76 from 2023-01-01 to 2023-06-30
+Making request 77 from 2023-06-30 to 2023-12-27
+Making request 78 from 2023-12-27 to 2023-12-31
+Data download completed for sensor 121721. Downloaded 7545 rows of data.
+
+Starting requests for sensor 133107.
+Making request 79 from 2023-01-01 to 2023-06-30
+Making request 80 from 2023-06-30 to 2023-12-27
+Making request 81 from 2023-12-27 to 2023-12-31
+No data was found for sensor 133107 between 2023-01-01T00:00:00-07:00 and 2023-12-31T00:00:00-07:00.
+
+Starting requests for sensor 133319.
+Making request 82 from 2023-01-01 to 2023-06-30
+Making request 83 from 2023-06-30 to 2023-12-27
+Making request 84 from 2023-12-27 to 2023-12-31
+Data download completed for sensor 133319. Downloaded 7862 rows of data.
+
+Starting requests for sensor 128465.
+Making request 85 from 2023-01-01 to 2023-06-30
+Making request 86 from 2023-06-30 to 2023-12-27
+Making request 87 from 2023-12-27 to 2023-12-31
+Data download completed for sensor 128465. Downloaded 8736 rows of data.
+
+
+Download request has been completed. Scroll down for a summary:
+--------------------------------------
