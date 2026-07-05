@@ -1,0 +1,5 @@
+GraPhy diffusion module — demo run (one hour of the Boulder graph)
+nodes=26  edges=152
+X in  : (26, 1)   (PM2.5 per node)
+out   : (26, 8)   (diffused, 8 feature dims)
+learnable l (per-feature diffusion rate): [1. 1. 1. 1. 1. 1. 1. 1.]
