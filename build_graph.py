@@ -1,7 +1,6 @@
 """
 Build PM2.5 sensor graphs for Boulder, CO  ->  PyTorch Geometric Data objects.
 =============================================================================
-Everything lives in this ONE file, top to bottom, in the order it happens:
 
     1. SETTINGS        - the few knobs you might change
     2. LOAD            - raw PurpleAir CSVs         -> tidy table
@@ -12,8 +11,7 @@ Everything lives in this ONE file, top to bottom, in the order it happens:
     7. GRAPHS          - one PyG Data object per timestep
     8. SHOW + CHECK    - print every matrix, save CSVs, sanity checks, plot
 
-Run it:   .venv/bin/python build_graph.py
-Scope:    graph construction only. No model, no training, no masking yet.
+running:   .venv/bin/python build_graph.py
 """
 from __future__ import annotations
 
@@ -31,37 +29,39 @@ from sklearn.neighbors import NearestNeighbors
 from torch_geometric.data import Data
 
 
-# =========================================================================== #
-# 1. SETTINGS
-# =========================================================================== #
+# =========================================================================== 
+# 1. settings
+# =========================================================================== 
+# define data directories
 ROOT = Path(__file__).resolve().parent
 DATA_DIR = ROOT / "data"
 OUT_DIR = ROOT / "outputs"
 MATRIX_DIR = OUT_DIR / "matrices"
 
-# Which sensor set: "u" (26 sensors) or "r" (14 sensors). Boulder/Denver area.
+# choose urban group: "u" for urban (26 sensors) or "r" for rural (14 sensors)
 SENSOR_SET = "u"
 SENSOR_DIR = DATA_DIR / f"{SENSOR_SET}purple_air_denver_boulder"
 
-K = 5                       # each node connects to its K nearest neighbours
-LATLON_CRS = "EPSG:4326"    # WGS84 lat/lon (input)
+K = 5                       # each node connects to its K nearest neighbors
+LATLON_CRS = "EPSG:4326"    # world geodetic system for lat/lon coordinates (input)
 UTM_CRS = "EPSG:32613"      # UTM zone 13N -> metres (covers Boulder, CO)
 
-# Where real coordinates will go once a teammate delivers them (see step 3).
+# filler data for now
 COORDS_FILE = DATA_DIR / "sensor_coords.csv"   # columns: station_id,lat,lon,elevation
 
-# --- placeholders (deterministic) -- TODO: delete when real data arrives ----
+# determinisitic placeholders which will get replaced
 PLACEHOLDER_BOX = dict(lat=(39.95, 40.10), lon=(-105.30, -105.15))  # Boulder-ish
 PLACEHOLDER_ELEV_M = 1655.0   # constant -> elevation-difference edges are 0
 SEED = 1337
 
-# Edge feature columns, documented once. edge_attr[:, c] is column c below.
+# edge feature columns to get stored in edge_attr matrix: edge_attr[:, c] is column c below.
 EDGE_COLS = ["distance_m", "wind_angle", "wind_speed", "delev_m", "pm25_corr"]
 
 
-# =========================================================================== #
-# 2. LOAD  -- raw CSVs -> one tidy table  [station_id, timestamp, pm25]
-# =========================================================================== #
+# =========================================================================== 
+# 2. LOAD - csvs into one table 
+#       [station_id, timestamp, pm25]
+# =========================================================================== 
 def load_sensor_data() -> pd.DataFrame:
     """Read every non-empty PurpleAir CSV. The station id is the filename."""
     rows = []
@@ -79,11 +79,11 @@ def load_sensor_data() -> pd.DataFrame:
     return pd.concat(rows, ignore_index=True)
 
 
-# =========================================================================== #
-# 3. COORDINATES  -- the ONLY place coordinates come from.
-#    Swapping placeholders for real values = drop in data/sensor_coords.csv.
-#    Nothing else in this file changes.
-# =========================================================================== #
+# =========================================================================== 
+# 3. COORDINATES - from csv
+#       function exists because node identity is structurally tied to coordinates; this way coords comes from one place
+#       this is unlike the other attributes, which are measurements and are model inputs; sensor -> sensor id + location
+# =========================================================================== 
 def get_coordinates(station_ids: list[str]) -> pd.DataFrame:
     """Return [station_id, lat, lon, elevation]. Real file if present, else fake."""
     if COORDS_FILE.exists():
@@ -107,18 +107,21 @@ def get_coordinates(station_ids: list[str]) -> pd.DataFrame:
     return c[c["station_id"].isin(station_ids)].sort_values("station_id")
 
 
-# =========================================================================== #
-# 4. PROJECT  -- lat/lon (degrees) -> x/y (metres) so distances are physical
-# =========================================================================== #
+# =========================================================================== 
+# 4. PROJECT - lat/lon (degrees) become x/y (metres) so distances are physical
+# =========================================================================== 
 def project(lat: np.ndarray, lon: np.ndarray):
     tf = Transformer.from_crs(LATLON_CRS, UTM_CRS, always_xy=True)
     x, y = tf.transform(lon, lat)          # always_xy: pass lon,lat -> east,north
     return np.asarray(x), np.asarray(y)
 
 
-# =========================================================================== #
-# 5. EDGES  -- k-nearest-neighbours over x/y -> edge_index [2, E], undirected
-# =========================================================================== #
+# =========================================================================== 
+# 5. EDGES - creating the graph skeleton by getting the connecting line
+#       
+#       deciding that the nearest K neighbors of a node (k-nearest-neighbors over x/y) should be connected w/ an edge
+#       create edge_index [2, E], undirected
+# =========================================================================== 
 def knn_edges(x: np.ndarray, y: np.ndarray, k: int) -> torch.Tensor:
     """Connect each node to its k nearest neighbours; make it undirected."""
     pts = np.column_stack([x, y])
@@ -135,7 +138,14 @@ def knn_edges(x: np.ndarray, y: np.ndarray, k: int) -> torch.Tensor:
 
 
 # =========================================================================== #
-# 6. EDGE FEATURES  -- build the full NxN matrices, then read off each edge.
+# 6. EDGE FEATURES - build full NxN matrices, then read off each edge
+#       in matrix, each column is a sensor, so each cell holds the into of a sensor pair
+#       matrix[i,j] holds a vector with the relationship between sensor i and j
+# 
+#       create a distance matrix - meters from each other  
+#       correlation matrix - pm2.5 history similarities
+#       edge attribute tensor - edge features, one row per edge with 5 feature columns  
+#           (distance_m, wind_angle, wind_speed, delev_m, pm25_corr))
 # =========================================================================== #
 def distance_matrix(x: np.ndarray, y: np.ndarray) -> np.ndarray:
     """NxN straight-line distance in metres between every pair of sensors."""
@@ -165,9 +175,9 @@ def build_edge_attr(edge_index, dist, corr, elevation) -> torch.Tensor:
 
 
 # =========================================================================== #
-# 7. GRAPHS  -- one PyG Data object per timestep.
-#    The graph *structure* (edges, edge_attr, positions) is the same every
-#    hour; only the node PM2.5 signal x (and target y) change.
+# 7. GRAPHS - one PyG Data object per timestep (hourly)
+#    we assume graph structure (edges, edge_attr, positions) is the same every
+#    hour without hourly wind data, only the node PM2.5 signal x (and target y) change
 # =========================================================================== #
 def build_graphs(pm_wide, edge_index, edge_attr, lat, lon, x_m, y_m,
                  station_ids, max_timesteps=None):
