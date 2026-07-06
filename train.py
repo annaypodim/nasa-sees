@@ -22,6 +22,7 @@ run:   .venv/bin/python train.py
 
 from __future__ import annotations
 
+import json
 from datetime import datetime
 from pathlib import Path
 
@@ -42,12 +43,13 @@ from model import GraPhyNet
 # ---------------------------------------------------------------------------
 # settings
 # ---------------------------------------------------------------------------
+# --- levers: edit these to change a run ---------------------------------------
 SEED = 0
-EPOCHS = 80
-STEPS_PER_EPOCH = 64  # random timesteps sampled per epoch
+EPOCHS = 80  # training length
+VAL_FRAC = 0.15  # train/test split: last fraction of timeline held out for eval
 MASK_FRAC = 0.20  # fraction of a timestep's KNOWN nodes to hide + predict
+STEPS_PER_EPOCH = 64  # random timesteps sampled per epoch
 LR = 0.01
-VAL_FRAC = 0.15  # last chunk of timesteps held out for evaluation
 UNKNOWN = 0.0  # placeholder fed for hidden/missing nodes (in z-space)
 EXCEED_UG = 35.4  # PM2.5 exceedance threshold for the ROC-AUC label (EPA USG)
 
@@ -111,6 +113,11 @@ def build_static_graph():
     inv_len = 1.0 / np.maximum(np.hypot(dx, dy), 1e-9)
     ux, uy = dx * inv_len, dy * inv_len  # unit edge direction (src -> dst)
 
+    # signed Δelevation per edge (dst − src, metres) for the elevation gate.
+    # real DEM here (build_graph2 altitudes), so the gate is genuinely active.
+    elev = coords["elevation"].to_numpy()
+    edge_delev = torch.tensor(elev[dst] - elev[src], dtype=torch.float)
+
     U, V = u10_wide.to_numpy(), v10_wide.to_numpy()  # [T, N]
     u_edge = 0.5 * (U[:, src] + U[:, dst])           # [T, E] mean wind on the edge
     v_edge = 0.5 * (V[:, src] + V[:, dst])
@@ -125,17 +132,19 @@ def build_static_graph():
         f"[graph] set={bg.SENSOR_SET!r}  nodes={len(ids)}  "
         f"edges={edge_index.shape[1]}  timesteps={len(pm)}  has_wind={has_wind}"
     )
-    return ids, pm, observed, edge_index, edge_weight, edge_attr_t
+    return ids, pm, observed, edge_index, edge_weight, edge_attr_t, edge_delev
 
 
 # ---------------------------------------------------------------------------
 # training
 # ---------------------------------------------------------------------------
 def main():
+    print(f"[config] epochs={EPOCHS}  val_frac={VAL_FRAC}  mask_frac={MASK_FRAC}")
+
     torch.manual_seed(SEED)
     rng = np.random.default_rng(SEED)
 
-    ids, pm, observed, edge_index, edge_weight, edge_attr_t = build_static_graph()
+    ids, pm, observed, edge_index, edge_weight, edge_attr_t, edge_delev = build_static_graph()
     N = len(ids)
 
     # normalise in log1p space using ONLY observed training cells (no leakage).
@@ -169,7 +178,7 @@ def main():
 
         x = z_t[t].clone().reshape(-1, 1)
         x[target_nodes, 0] = UNKNOWN  # hide them from the input
-        pred = model(x, edge_index, edge_weight, edge_attr_t[t])  # this hour's wind
+        pred = model(x, edge_index, edge_weight, edge_attr_t[t], edge_delev)  # this hour's wind + elevation gate
         return loss_fn(pred[target_nodes, 0], z_t[t][target_nodes])
 
     print(
@@ -225,7 +234,7 @@ def main():
             target_nodes = known[torch.randperm(len(known))[:n_hide]]
             x = z_t[t].clone().reshape(-1, 1)
             x[target_nodes, 0] = UNKNOWN
-            pred_z = model(x, edge_index, edge_weight, edge_attr_t[t])[:, 0]
+            pred_z = model(x, edge_index, edge_weight, edge_attr_t[t], edge_delev)[:, 0]
             for node in target_nodes.tolist():
                 true_ug = np.expm1(z[t, node] * sigma + mu)
                 pred_ug = np.expm1(pred_z[node].item() * sigma + mu)
@@ -267,10 +276,29 @@ def main():
     run_id = datetime.now().strftime("%Y%m%d_%H%M%S")
     run_dir = Path(__file__).resolve().parent / "outputs" / "runs" / f"train_{run_id}"
     run_dir.mkdir(parents=True, exist_ok=True)
-    out = run_dir / "predictions.csv"
-    ev.to_csv(out, index=False)
-    print(f"\n[saved] held-out predictions -> {out}")
-    print(ev.head(12).round(2).to_string(index=False))
+
+    # the numbers we actually read: a small metrics.json summarising the run,
+    # plus the settings that produced it so a folder is self-explaining.
+    metrics = {
+        "run_id": run_id,
+        "n_nodes": int(N),
+        "epochs": EPOCHS,
+        "val_frac": VAL_FRAC,
+        "mask_frac": MASK_FRAC,
+        "n_masked_eval": int(len(ev)),
+        "mae_ug": round(float(mae), 3),
+        "mae_baseline_ug": round(float(baseline), 3),
+        "skill_vs_baseline": round(float(1 - mae / baseline), 3),
+        "corr": round(float(corr), 3),
+        "roc_auc": round(float(auc), 3),
+        "exceed_ug": EXCEED_UG,
+        "n_exceed": n_pos,
+    }
+    with open(run_dir / "metrics.json", "w") as f:
+        json.dump(metrics, f, indent=2)
+    ev.to_csv(run_dir / "predictions.csv", index=False)  # raw rows, for recompute
+    print(f"\n[saved] metrics  -> {run_dir / 'metrics.json'}")
+    print(f"[saved] raw csv  -> {run_dir / 'predictions.csv'}")
 
     plot_results(hist, ev, mae, baseline, corr, run_dir)
 

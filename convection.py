@@ -14,11 +14,6 @@ no physics matrix here, just message passing:
     agg = agg + h                       RESIDUAL: keep the node's own identity
     out = UpdateMLP( [h + agg, agg] )   sees combined state AND the raw message
 
-THE NOVEL BIT (why wind is an EDGE feature, not a node feature):
-    boulder has one city-wide wind reading -- same speed/angle everywhere -- so
-    per-node wind carries no information. what varies is the wind's angle
-    RELATIVE to each sensor pair. project the city wind onto the edge geometry:
-
         wind_along = wind_speed * cos(wind_dir - edge_bearing)
 
     +1 = wind blows straight from src to dst, -1 = straight against, 0 = crosswind.

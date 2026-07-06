@@ -30,21 +30,32 @@ from diffusion import DiffusionModule, inverse_distance_weights
 from convection import ConvectionModule
 from local import LocalModule
 from fusion import Fusion
+from elevation import ElevationGate
 
 
 class GraPhyLayer(nn.Module):
-    """one message-passing layer: three modules -> fuse -> residual."""
+    """one message-passing layer: three modules -> fuse -> residual.
+
+    elevation is a MODULATOR, not a fourth module: one shared ElevationGate turns
+    each edge's signed Δheight into a scalar that dampens BOTH transport terms --
+    it scales diffusion's edge weight and convection's message. local (a purely
+    node-local source/sink term) is left ungated. see elevation.py.
+    """
     def __init__(self, dim: int, edge_in: int):
         super().__init__()
         self.diffusion  = DiffusionModule(dim, dim)
         self.convection = ConvectionModule(dim, edge_in, dim)
         self.local      = LocalModule(dim, dim)
         self.fusion     = Fusion(dim)
+        self.elev_gate  = ElevationGate()   # shared height scale for both transport terms
 
-    def forward(self, h, edge_index, edge_weight, edge_attr):
-        d = self.diffusion(h, edge_index, edge_weight)
-        c = self.convection(h, edge_index, edge_attr)
-        l = self.local(h, edge_index, edge_weight)
+    def forward(self, h, edge_index, edge_weight, edge_attr, edge_delev=None):
+        gate = None if edge_delev is None else self.elev_gate(edge_delev)   # [E]
+        # diffusion reads the gate through the edge weight; convection through the message
+        diff_weight = edge_weight if gate is None else edge_weight * gate
+        d = self.diffusion(h, edge_index, diff_weight)
+        c = self.convection(h, edge_index, edge_attr, edge_gate=gate)
+        l = self.local(h, edge_index, edge_weight)   # local source/sink: ungated
         fused, _ = self.fusion(l, d, c)   # returns (blend, weights); we want the blend
         return h + fused   # RESIDUAL: nudge, don't overwrite -> no oversmoothing
 
@@ -59,10 +70,10 @@ class GraPhyNet(nn.Module):
         )
         self.head = nn.Linear(hidden, 1)                  # width H -> one PM2.5 value
 
-    def forward(self, x, edge_index, edge_weight, edge_attr):
+    def forward(self, x, edge_index, edge_weight, edge_attr, edge_delev=None):
         h = self.encoder(x)
         for layer in self.layers:
-            h = layer(h, edge_index, edge_weight, edge_attr)
+            h = layer(h, edge_index, edge_weight, edge_attr, edge_delev)
         return self.head(h)   # [N, 1] predicted PM2.5 at every node
 
 
@@ -94,11 +105,17 @@ if __name__ == "__main__":
     WIND_DIR, WIND_SPEED = np.deg2rad(270.0), 3.0   # one city-wide wind (placeholder)
     edge_attr = wind_edge_features(edge_dist, bearing, WIND_DIR, WIND_SPEED)
 
+    # signed Δelevation per edge (dst − src) feeds the elevation gate. with the
+    # constant placeholder elevation this is all zeros -> gate ≡ 1 (inert no-op).
+    elev = coords["elevation"].to_numpy()
+    src, dst = edge_index.numpy()
+    edge_delev = torch.tensor(elev[dst] - elev[src], dtype=torch.float)
+
     # node features X: PM2.5 at the first hour, one scalar per node (NaN -> 0)
     x = torch.tensor(pm.iloc[0].fillna(0).to_numpy().reshape(-1, 1), dtype=torch.float)
 
     model = GraPhyNet(node_in=1, edge_in=edge_attr.shape[1], hidden=8, layers=3)
-    pred = model(x, edge_index, edge_weight, edge_attr)
+    pred = model(x, edge_index, edge_weight, edge_attr, edge_delev)
 
     print(f"nodes={x.shape[0]}  edges={edge_index.shape[1]}  layers={len(model.layers)}")
     print(f"X in : {tuple(x.shape)}   (PM2.5 per node)")
