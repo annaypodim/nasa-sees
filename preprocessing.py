@@ -41,11 +41,40 @@ import pandas as pd
 # also prune 147456 / 180637 if you want a stricter node set.
 COVERAGE_THRESHOLD = 0.40
 
+# physical-plausibility bounds for a single hourly PM2.5 reading (ug/m3).
+# The EPA AQI scale tops out at ~500 ug/m3; sustained hourly values above that
+# are off-scale and, in this dataset, come from stuck/faulty sensors (e.g.
+# 124223 reads >500 for basically the whole year). Readings outside [0, MAX]
+# are treated as NOT observed -- never an input, never a target. A sensor whose
+# real coverage then falls below COVERAGE_THRESHOLD is dropped by the dud step,
+# so a mostly-garbage sensor prunes itself without a separate rule.
+PLAUSIBLE_MIN_UG = 0.0
+PLAUSIBLE_MAX_UG = 500.0
+
 # how to fill missing *inputs* (targets are never filled). "zero" mirrors what
 # model.py did before; "mean" uses each sensor's own mean, which is a gentler
 # prior for message passing. Filled values are flagged by `observed`, so this
 # choice only affects the forward pass, never the loss.
 FILL_METHOD = "zero"
+
+
+# ---------------------------------------------------------------------------
+# 0. mask physically-implausible readings
+# ---------------------------------------------------------------------------
+def mask_implausible(pm_wide: pd.DataFrame,
+                     lo: float = PLAUSIBLE_MIN_UG,
+                     hi: float = PLAUSIBLE_MAX_UG):
+    """Set out-of-range PM2.5 cells to NaN so they count as *not observed*.
+
+    Returns (cleaned_wide, n_masked). Runs before the coverage drop, so a
+    sensor whose readings are mostly garbage sees its coverage collapse and is
+    then removed by drop_dud_sensors -- no special per-sensor rule needed. Only
+    finite readings strictly outside [lo, hi] are masked; existing NaNs stay
+    NaN and are not counted.
+    """
+    bad = ((pm_wide < lo) | (pm_wide > hi)) & pm_wide.notna()
+    n_masked = int(bad.to_numpy().sum())
+    return pm_wide.mask(bad), n_masked
 
 
 # ---------------------------------------------------------------------------
@@ -99,19 +128,29 @@ def fill_missing(pm_wide: pd.DataFrame, method: str = FILL_METHOD) -> pd.DataFra
 def preprocess(pm_wide: pd.DataFrame,
                threshold: float = COVERAGE_THRESHOLD,
                fill_method: str = FILL_METHOD,
+               plausible_range: tuple[float, float] = (PLAUSIBLE_MIN_UG,
+                                                       PLAUSIBLE_MAX_UG),
                verbose: bool = True):
     """Full pipeline -> (filled, observed, kept_ids, dropped_ids).
 
     `filled` and `observed` share the same [time x kept_node] shape; feed
     `filled` to the model as input and use `observed` to mask the loss.
+    Implausible readings are masked to NaN first, so stuck/faulty sensors lose
+    coverage and are then dropped by the dud step.
     """
-    kept_wide, dropped = drop_dud_sensors(pm_wide, threshold)
+    lo, hi = plausible_range
+    clean_wide, n_masked = mask_implausible(pm_wide, lo, hi)
+    kept_wide, dropped = drop_dud_sensors(clean_wide, threshold)
     observed = observed_mask(kept_wide)
     filled = fill_missing(kept_wide, fill_method)
     kept_ids = list(kept_wide.columns)
 
     if verbose:
-        cov = sensor_coverage(pm_wide)
+        cov = sensor_coverage(clean_wide)  # coverage AFTER masking garbage
+        cells = pm_wide.size
+        print(f"[preprocess] masked {n_masked}/{cells} implausible cells "
+              f"({n_masked / cells:.2%}) outside [{lo:g}, {hi:g}] ug/m3 "
+              f"-> treated as not observed")
         print(f"[preprocess] sensors: {pm_wide.shape[1]} -> {len(kept_ids)} "
               f"kept  (threshold={threshold:.0%} yearly coverage)")
         if dropped:
