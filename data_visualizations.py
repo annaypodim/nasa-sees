@@ -421,6 +421,59 @@ def fig_monthly_by_sensor(pm_wide, ids):
 
 
 # ---------------------------------------------------------------------------
+# 7. per-sensor mean-level outliers: each sensor's yearly-average PM2.5 vs. the
+#    cross-sensor mean +/- 1 and 2 std. A node whose baseline sits too far from
+#    the group is an "unhealthy" node -> candidate to drop before graph build.
+# ---------------------------------------------------------------------------
+def fig_sensor_outliers(pm_wide, ids, n_sigma=1.0):
+    per_sensor = pm_wide.mean()                 # each sensor's yearly-avg PM2.5
+    grand = per_sensor.mean()                   # cross-sensor mean of those
+    sd = per_sensor.std()                       # spread across sensors
+    lo, hi = grand - n_sigma * sd, grand + n_sigma * sd
+    order = per_sensor.sort_values()            # ascending, for a readable bar
+    keep = (order >= lo) & (order <= hi)
+    colors = ["tab:blue" if k else "tab:red" for k in keep]
+
+    fig, ax0 = plt.subplots(figsize=(12, 8))
+
+    # --- sorted per-sensor mean, with labeled mean / sigma lines --------------
+    y = np.arange(len(order))
+    ax0.barh(y, order.values, color=colors)
+    ax0.set_yticks(y)
+    ax0.set_yticklabels(order.index, fontsize=7)
+    ax0.axvspan(max(lo, 0), hi, color="tab:green", alpha=0.08)
+
+    # mean line + each sigma edge, each drawn with its own text label so the
+    # 1 / 2 sigma boundaries are readable straight off the axis.
+    ax0.axvline(grand, color="k", lw=1.5)
+    top = len(order) - 0.5
+    ax0.text(grand, top, f" mean = {grand:.1f}", color="k", fontsize=8,
+             va="top", ha="left", rotation=90)
+    for s, style in [(1, "--"), (2, ":")]:
+        for sign in (-1, 1):
+            edge = grand + sign * s * sd
+            if edge <= 0:
+                continue
+            ax0.axvline(edge, color="0.4", ls=style, lw=1)
+            ax0.text(edge, top, f" {'+' if sign > 0 else '-'}{s} sigma "
+                     f"= {edge:.1f}", color="0.35", fontsize=8,
+                     va="top", ha="left", rotation=90)
+
+    ax0.set(
+        title=f"Per-sensor yearly-mean PM2.5\n"
+        f"red = outside +/-{n_sigma:g} std -> drop candidate",
+        xlabel="mean PM2.5 ug/m3",
+        ylabel="Sensor ID",
+    )
+
+    dropped = order.index[~keep].tolist()
+    print(f"[viz] mean-level outliers at +/-{n_sigma:g} std "
+          f"(mean={grand:.1f}, std={sd:.1f}, band=[{lo:.1f}, {hi:.1f}]): "
+          f"{len(dropped)} -> {dropped}")
+    _save(fig, "7_sensor_outliers.png")
+
+
+# ---------------------------------------------------------------------------
 def _save(fig, name):
     VIZ_DIR.mkdir(parents=True, exist_ok=True)
     fig.tight_layout()
@@ -446,7 +499,8 @@ def main():
     fig_graph(pm_wide, coords, ids)
     fig_spatial_corr(pm_wide, coords, ids)
     fig_monthly_by_sensor(pm_wide, ids)
-    print(f"\n[done] 6 figures in {VIZ_DIR}")
+    fig_sensor_outliers(pm_wide, ids)
+    print(f"\n[done] 7 figures in {VIZ_DIR}")
 
 
 if __name__ == "__main__":
