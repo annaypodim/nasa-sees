@@ -32,6 +32,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 import torch
+from sklearn.metrics import roc_auc_score
 
 import build_graph2 as bg
 import preprocessing as pp
@@ -48,6 +49,7 @@ MASK_FRAC = 0.20  # fraction of a timestep's KNOWN nodes to hide + predict
 LR = 0.01
 VAL_FRAC = 0.15  # last chunk of timesteps held out for evaluation
 UNKNOWN = 0.0  # placeholder fed for hidden/missing nodes (in z-space)
+EXCEED_UG = 35.4  # PM2.5 exceedance threshold for the ROC-AUC label (EPA USG)
 
 
 # ---------------------------------------------------------------------------
@@ -242,11 +244,25 @@ def main():
     baseline = (
         (ev["pm25_true"] - ev["pm25_true"].mean()).abs().mean()
     )  # predict-the-mean
+
+    # ROC-AUC of the exceedance task: can pred rank which nodes cross EXCEED_UG?
+    # (regression -> ranking metric; pred value is the score, true>thr the label)
+    labels = (ev["pm25_true"] > EXCEED_UG).to_numpy()
+    n_pos = int(labels.sum())
+    if 0 < n_pos < len(labels):
+        auc = roc_auc_score(labels, ev["pm25_pred"].to_numpy())
+    else:
+        auc = float("nan")  # AUC undefined when one class is empty
+
     print(f"\nHELD-OUT IMPUTATION ({len(ev)} masked nodes over val set):")
     print(
         f"  MAE            = {mae:6.2f} ug/m3   (predict-the-mean baseline = {baseline:6.2f})"
     )
     print(f"  corr(true,pred)= {corr:6.3f}")
+    print(
+        f"  ROC-AUC        = {auc:6.3f}   (exceedance >{EXCEED_UG} ug/m3: "
+        f"{n_pos}/{len(labels)} positive)"
+    )
 
     run_id = datetime.now().strftime("%Y%m%d_%H%M%S")
     run_dir = Path(__file__).resolve().parent / "outputs" / "runs" / f"train_{run_id}"
