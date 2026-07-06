@@ -5,30 +5,30 @@ Four figure groups, each targeting a class of "is anything wrong?" bug for
 graph inputs. Everything is built from the SAME loaders the real pipeline uses
 (build_graph2 + preprocessing), so what you see is what the model eats.
 
-  1. MISSINGNESS / COVERAGE   outputs/viz/raw/1_missingness.png
+  1. MISSINGNESS / COVERAGE   outputs/viz/1_missingness.png
        - availability heatmap [sensor x hour]: who is online when
        - per-sensor coverage bars: the long tail of sparse / dead sensors
      Catches: the overlap problem, systematic gaps, the 8736 ceiling.
 
-  2. VALUE DISTRIBUTIONS       outputs/viz/raw/2_distributions.png
+  2. VALUE DISTRIBUTIONS       outputs/viz/2_distributions.png
        - pooled PM2.5 histogram, linear + log
        - per-sensor boxplots
        - per-sensor mean-vs-std scatter
      Catches: negatives, stuck-at-zero, off-scale spikes, miscalibrated sensors.
 
-  3. TIME-SERIES BEHAVIOUR     outputs/viz/raw/3_timeseries.png
+  3. TIME-SERIES BEHAVIOUR     outputs/viz/3_timeseries.png
        - a few sensors overlaid: do they co-vary on regional events?
        - diurnal profile (mean by hour-of-day)
        - seasonal profile (mean by month)
      Catches: flat/dead series, timezone shifts, physically-wrong daily/annual shape.
 
-  4. GRAPH STRUCTURE           outputs/viz/raw/4_graph.png
+  4. GRAPH STRUCTURE           outputs/viz/4_graph.png
        - spatial node map with kNN edges (real lat/lon)
        - node degree distribution
        - PM2.5 correlation vs. edge distance
      Catches: bad coordinates, isolated / hub nodes, a graph that ignores physics.
 
-  6. MONTHLY MEANS PER SENSOR  outputs/viz/raw/6_monthly_by_sensor.png
+  6. MONTHLY MEANS PER SENSOR  outputs/viz/6_monthly_by_sensor.png
        - [sensor x month] heatmap of mean PM2.5
        - the same means overlaid as one line per sensor
      Catches: sensors that only wake up for part of the year, per-sensor
@@ -53,7 +53,17 @@ import pandas as pd
 import build_graph2 as bg
 import preprocessing as pp
 
-VIZ_DIR = bg.OUT_DIR / "viz" / "raw"
+# --- name this run -----------------------------------------------------------
+# Write whatever describes the current experiment here. Every figure for this
+# run is saved under outputs/viz/<RUN_LABEL>/ so manual runs don't overwrite
+# each other -- change it before each run to keep the graphs as you go.
+RUN_LABEL = "above 1 sigma removed"
+
+# drop sensors whose yearly-mean PM2.5 exceeds (cross-sensor mean + this many
+# std). Set to None to keep every sensor. 1.0 -> "above 1 sigma removed".
+DROP_ABOVE_SIGMA = 1.0
+
+VIZ_DIR = bg.OUT_DIR / "viz" / RUN_LABEL if RUN_LABEL else bg.OUT_DIR / "viz"
 
 
 # ---------------------------------------------------------------------------
@@ -82,6 +92,19 @@ def load(apply_preprocess: bool = True):
             print(f"[viz] preprocessing dropped {len(dropped)} dud sensors: {dropped}")
         station_ids = list(pm_wide.columns)
         coords = coords[coords["station_id"].isin(station_ids)]
+
+        # drop mean-level outliers: sensors whose yearly avg sits above the
+        # cross-sensor mean by more than DROP_ABOVE_SIGMA std -> unhealthy node.
+        if DROP_ABOVE_SIGMA is not None:
+            per_sensor = pm_wide.mean()
+            cutoff = per_sensor.mean() + DROP_ABOVE_SIGMA * per_sensor.std()
+            hot = per_sensor[per_sensor > cutoff].index.tolist()
+            if hot:
+                print(f"[viz] dropped {len(hot)} sensors above "
+                      f"+{DROP_ABOVE_SIGMA:g} sigma (cutoff={cutoff:.1f}): {hot}")
+            pm_wide = pm_wide.drop(columns=hot)
+            station_ids = list(pm_wide.columns)
+            coords = coords[coords["station_id"].isin(station_ids)]
     coords = coords.set_index("station_id").reindex(station_ids).reset_index()
     print(f"[viz] {pm_wide.shape[0]} hours x {pm_wide.shape[1]} sensors")
     return pm_wide, coords, station_ids
