@@ -55,10 +55,10 @@ class Fusion(nn.Module):
 # ---------------------------------------------------------------------------
 if __name__ == "__main__":
     import numpy as np
-    import build_graph as bg
-    from diffusion import DiffusionModule, inverse_distance_weights
-    from local import LocalModule
-    from convection import ConvectionModule, edge_bearings, wind_edge_features
+    from src.graph import build_graph as bg
+    from src.model.diffusion import DiffusionModule, inverse_distance_weights
+    from src.model.local import LocalModule
+    from src.model.convection import ConvectionModule, edge_bearings, wind_edge_features
 
     long_df = bg.load_sensor_data()
     ids = sorted(long_df["station_id"].unique())

@@ -50,8 +50,8 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 
-import build_graph2 as bg
-import preprocessing as pp
+from src.graph import build_graph2 as bg
+from src.graph import preprocessing as pp
 
 # --- name this run -----------------------------------------------------------
 # Write whatever describes the current experiment here. Every figure for this

@@ -84,7 +84,7 @@ def edge_bearings(x_m, y_m, edge_index):
 # demo
 # ---------------------------------------------------------------------------
 if __name__ == "__main__":
-    import build_graph as bg
+    from src.graph import build_graph as bg
 
     long_df = bg.load_sensor_data()
     ids = sorted(long_df["station_id"].unique())

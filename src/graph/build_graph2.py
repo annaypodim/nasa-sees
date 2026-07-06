@@ -3,7 +3,7 @@ Build PM2.5 sensor graphs for Boulder, CO  ->  PyTorch Geometric Data objects.
 =============================================================================
 Data layout (from https://github.com/annaypodim/nasa-sees, all under ./data):
 
-  1. COORDINATES  -  data/sensor_lat_long_alt
+  1. COORDINATES  -  data/boulder/coords/sensor_lat_long_alt
      Not a CSV. A text file with a header line, then named group blocks, each
      a Python-literal list of [sensor_id, lat, lon, altitude_ft]:
 
@@ -21,15 +21,15 @@ Data layout (from https://github.com/annaypodim/nasa-sees, all under ./data):
      Altitude is in FEET (values ~5300-8800 ft match Boulder-area elevation,
      ~1600-2700 m) -> converted to metres for use alongside UTM distances.
 
-  2. WIND  -  data/group_a.zip (urban) / data/group_b.zip (rural)
+  2. WIND  -  data/boulder/wind/group_a.zip (urban) / group_b.zip (rural)
      Each zip extracts to a folder of one CSV per sensor, named
      sensor_<id>.csv, columns time,u10,v10,u100,v100, sampled every 2 HOURS.
      group_a's ids match the "Urban" list exactly; group_b's match "Rural
      Sensors" exactly -- so which zip/folder to read is determined by
      SENSOR_SET below, not fixed to one group.
 
-  3. AIR QUALITY (PM2.5)  -  data/upurple_air_denver_boulder/ (urban) or
-     data/rpurple_air_denver_boulder/ (rural)
+  3. AIR QUALITY (PM2.5)  -  data/boulder/pm25/urban/ (urban) or
+     data/boulder/pm25/rural/ (rural)
      One raw PurpleAir CSV per sensor, named like
      "<id> 2023-01-01 2023-12-31 60-Minute Average.csv", columns
      time_stamp,pm2.5_atm, HOURLY. The station id is the leading digits of
@@ -58,7 +58,7 @@ Pipeline stages:
     8. GRAPHS           - one PyG Data object per hourly timestep
     9. SHOW + CHECK     - print every matrix, save CSVs, sanity checks, plot
 
-running:   .venv/bin/python build_graph.py
+running:   .venv/bin/python -m src.graph.build_graph2
 """
 from __future__ import annotations
 
@@ -81,7 +81,7 @@ from torch_geometric.data import Data
 # ===========================================================================
 # 1. settings
 # ===========================================================================
-ROOT = Path(__file__).resolve().parent
+ROOT = Path(__file__).resolve().parents[2]   # repo root (src/graph/ -> ../../)
 DATA_DIR = ROOT / "data"
 OUT_DIR = ROOT / "outputs"
 MATRIX_DIR = OUT_DIR / "matrices"
@@ -89,20 +89,21 @@ MATRIX_DIR = OUT_DIR / "matrices"
 # choose which named group in sensor_lat_long_alt to build a graph for.
 SENSOR_SET = "urban"   # "urban" or "rural"
 
-COORDS_FILE = DATA_DIR / "sensor_lat_long_alt"
+COORDS_FILE = DATA_DIR / "boulder" / "coords" / "sensor_lat_long_alt"
 
-# per-group file locations: urban <-> group_a / upurple_air_denver_boulder,
-# rural <-> group_b / rpurple_air_denver_boulder.
+# per-group file locations, all under data/boulder/:
+#   urban <-> wind/group_a.zip + wind/urban/ + pm25/urban/
+#   rural <-> wind/group_b.zip + wind/rural/ + pm25/rural/
 GROUP_CONFIG = {
     "urban": dict(
-        purple_air_dir=DATA_DIR / "upurple_air_denver_boulder",
-        wind_zip=DATA_DIR / "group_a.zip",
-        wind_dir=DATA_DIR / "group_a",
+        purple_air_dir=DATA_DIR / "boulder" / "pm25" / "urban",
+        wind_zip=DATA_DIR / "boulder" / "wind" / "group_a.zip",
+        wind_dir=DATA_DIR / "boulder" / "wind" / "urban",
     ),
     "rural": dict(
-        purple_air_dir=DATA_DIR / "rpurple_air_denver_boulder",
-        wind_zip=DATA_DIR / "group_b.zip",
-        wind_dir=DATA_DIR / "group_b",
+        purple_air_dir=DATA_DIR / "boulder" / "pm25" / "rural",
+        wind_zip=DATA_DIR / "boulder" / "wind" / "group_b.zip",
+        wind_dir=DATA_DIR / "boulder" / "wind" / "rural",
     ),
 }
 

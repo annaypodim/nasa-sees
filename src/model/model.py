@@ -26,11 +26,11 @@ from pathlib import Path
 import torch
 import torch.nn as nn
 
-from diffusion import DiffusionModule, inverse_distance_weights
-from convection import ConvectionModule
-from local import LocalModule
-from fusion import Fusion
-from elevation import ElevationGate
+from src.model.diffusion import DiffusionModule, inverse_distance_weights
+from src.model.convection import ConvectionModule
+from src.model.local import LocalModule
+from src.model.fusion import Fusion
+from src.model.elevation import ElevationGate
 
 
 class GraPhyLayer(nn.Module):
@@ -82,8 +82,8 @@ class GraPhyNet(nn.Module):
 # ---------------------------------------------------------------------------
 if __name__ == "__main__":
     import numpy as np
-    import build_graph as bg
-    from convection import wind_edge_features, edge_bearings
+    from src.graph import build_graph as bg
+    from src.model.convection import wind_edge_features, edge_bearings
 
     long_df = bg.load_sensor_data()
     ids = sorted(long_df["station_id"].unique())
@@ -126,7 +126,7 @@ if __name__ == "__main__":
     import pandas as pd
     from datetime import datetime
     run_id = datetime.now().strftime("%Y%m%d_%H%M%S")          # e.g. 20260705_2210_03
-    run_dir = Path(__file__).resolve().parent / "outputs" / "runs" / run_id
+    run_dir = Path(__file__).resolve().parents[2] / "outputs" / "runs" / run_id
     run_dir.mkdir(parents=True, exist_ok=True)
     results = pd.DataFrame({
         "station_id": ids,
