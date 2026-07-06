@@ -5,30 +5,30 @@ Four figure groups, each targeting a class of "is anything wrong?" bug for
 graph inputs. Everything is built from the SAME loaders the real pipeline uses
 (build_graph2 + preprocessing), so what you see is what the model eats.
 
-  1. MISSINGNESS / COVERAGE   outputs/viz/raw/1_missingness.png
+  1. MISSINGNESS / COVERAGE   outputs/viz/1_missingness.png
        - availability heatmap [sensor x hour]: who is online when
        - per-sensor coverage bars: the long tail of sparse / dead sensors
      Catches: the overlap problem, systematic gaps, the 8736 ceiling.
 
-  2. VALUE DISTRIBUTIONS       outputs/viz/raw/2_distributions.png
+  2. VALUE DISTRIBUTIONS       outputs/viz/2_distributions.png
        - pooled PM2.5 histogram, linear + log
        - per-sensor boxplots
        - per-sensor mean-vs-std scatter
      Catches: negatives, stuck-at-zero, off-scale spikes, miscalibrated sensors.
 
-  3. TIME-SERIES BEHAVIOUR     outputs/viz/raw/3_timeseries.png
+  3. TIME-SERIES BEHAVIOUR     outputs/viz/3_timeseries.png
        - a few sensors overlaid: do they co-vary on regional events?
        - diurnal profile (mean by hour-of-day)
        - seasonal profile (mean by month)
      Catches: flat/dead series, timezone shifts, physically-wrong daily/annual shape.
 
-  4. GRAPH STRUCTURE           outputs/viz/raw/4_graph.png
+  4. GRAPH STRUCTURE           outputs/viz/4_graph.png
        - spatial node map with kNN edges (real lat/lon)
        - node degree distribution
        - PM2.5 correlation vs. edge distance
      Catches: bad coordinates, isolated / hub nodes, a graph that ignores physics.
 
-  6. MONTHLY MEANS PER SENSOR  outputs/viz/raw/6_monthly_by_sensor.png
+  6. MONTHLY MEANS PER SENSOR  outputs/viz/6_monthly_by_sensor.png
        - [sensor x month] heatmap of mean PM2.5
        - the same means overlaid as one line per sensor
      Catches: sensors that only wake up for part of the year, per-sensor
@@ -53,7 +53,7 @@ import pandas as pd
 import build_graph2 as bg
 import preprocessing as pp
 
-VIZ_DIR = bg.OUT_DIR / "viz" / "raw"
+VIZ_DIR = bg.OUT_DIR / "viz"
 
 
 # ---------------------------------------------------------------------------
