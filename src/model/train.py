@@ -35,10 +35,10 @@ import pandas as pd
 import torch
 from sklearn.metrics import roc_auc_score
 
-import build_graph2 as bg
-import preprocessing as pp
-from diffusion import inverse_distance_weights
-from model import GraPhyNet
+from src.graph import build_graph2 as bg
+from src.graph import preprocessing as pp
+from src.model.diffusion import inverse_distance_weights
+from src.model.model import GraPhyNet
 
 # ---------------------------------------------------------------------------
 # settings
@@ -281,7 +281,7 @@ def main():
 
     run_id = datetime.now().strftime("%Y%m%d_%H%M%S")
     elev_tag = "elevON" if USE_ELEVATION else "elevOFF"   # folder says which config
-    run_dir = Path(__file__).resolve().parent / "outputs" / "runs" / f"train_{run_id}_{elev_tag}"
+    run_dir = Path(__file__).resolve().parents[2] / "outputs" / "runs" / f"train_{run_id}_{elev_tag}"
     run_dir.mkdir(parents=True, exist_ok=True)
 
     # the numbers we actually read: a small metrics.json summarising the run,

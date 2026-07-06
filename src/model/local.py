@@ -58,8 +58,8 @@ class LocalModule(nn.Module):
 # demo
 # ---------------------------------------------------------------------------
 if __name__ == "__main__":
-    import build_graph as bg
-    from diffusion import inverse_distance_weights
+    from src.graph import build_graph as bg
+    from src.model.diffusion import inverse_distance_weights
 
     long_df = bg.load_sensor_data()
     ids = sorted(long_df["station_id"].unique())

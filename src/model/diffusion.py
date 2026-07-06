@@ -51,7 +51,7 @@ def inverse_distance_weights(dist_m, eps: float = 1.0):
 # demo
 # --------------------------------------------------------------------------- 
 if __name__ == "__main__":
-    import build_graph as bg
+    from src.graph import build_graph as bg
 
     long_df = bg.load_sensor_data()
     ids = sorted(long_df["station_id"].unique())

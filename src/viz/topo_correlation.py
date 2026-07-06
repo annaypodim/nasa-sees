@@ -44,12 +44,12 @@ from matplotlib.collections import LineCollection
 from matplotlib.colors import LightSource, Normalize
 from PIL import Image
 
-import build_graph2 as bg
-import data_visualizations as dv
+from src.graph import build_graph2 as bg
+from src.viz import data_visualizations as dv
 
 # public global DEM, terrarium RGB encoding, no key required
 TILE_URL = "https://s3.amazonaws.com/elevation-tiles-prod/terrarium/{z}/{x}/{y}.png"
-DEM_CACHE = bg.DATA_DIR / "dem_boulder.npz"
+DEM_CACHE = bg.DATA_DIR / "boulder" / "dem" / "dem_boulder.npz"
 MARGIN_DEG = 0.02          # pad the sensor bbox so nodes aren't on the edge
 DEFAULT_ZOOM = 12          # ~30 m/px near this latitude; plenty for a city
 

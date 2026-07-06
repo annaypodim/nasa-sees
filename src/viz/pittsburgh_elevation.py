@@ -32,12 +32,12 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import numpy as np
 
-import build_graph2 as bg
-import topo_correlation as tc
+from src.graph import build_graph2 as bg
+from src.viz import topo_correlation as tc
 
 FEET_TO_M = 0.3048
-LOC_FILE = bg.DATA_DIR / "pittsburgh_data" / "pittsburgh_loc_elev.txt"
-DEM_CACHE = bg.DATA_DIR / "dem_pittsburgh.npz"
+LOC_FILE = bg.DATA_DIR / "pittsburgh" / "coords" / "pittsburgh_loc_elev.txt"
+DEM_CACHE = bg.DATA_DIR / "pittsburgh" / "dem" / "dem_pittsburgh.npz"
 OUT = bg.OUT_DIR / "viz" / "pittsburgh_elevation.png"
 
 

@@ -33,14 +33,14 @@ from torch_geometric.data import Data
 # 1. settings
 # =========================================================================== 
 # define data directories
-ROOT = Path(__file__).resolve().parent
+ROOT = Path(__file__).resolve().parents[2]   # repo root (src/graph/ -> ../../)
 DATA_DIR = ROOT / "data"
 OUT_DIR = ROOT / "outputs"
 MATRIX_DIR = OUT_DIR / "matrices"
 
 # choose urban group: "u" for urban (26 sensors) or "r" for rural (14 sensors)
 SENSOR_SET = "u"
-SENSOR_DIR = DATA_DIR / f"{SENSOR_SET}purple_air_denver_boulder"
+SENSOR_DIR = DATA_DIR / "boulder" / "pm25" / ("urban" if SENSOR_SET == "u" else "rural")
 
 K = 5                       # each node connects to its K nearest neighbors
 LATLON_CRS = "EPSG:4326"    # world geodetic system for lat/lon coordinates (input)

@@ -168,7 +168,7 @@ def preprocess(pm_wide: pd.DataFrame,
 # demo -- runs the good (build_graph2) pipeline just to get a real wide table
 # ---------------------------------------------------------------------------
 if __name__ == "__main__":
-    import build_graph2 as bg
+    from src.graph import build_graph2 as bg
 
     cfg = bg.GROUP_CONFIG[bg.SENSOR_SET]
     coords = bg.parse_sensor_coords(bg.COORDS_FILE)
