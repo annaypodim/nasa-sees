@@ -21,6 +21,8 @@ MESSAGE PASSING  (why we stack layers):
 
 run the demo:   .venv/bin/python model.py
 """
+from pathlib import Path
+
 import torch
 import torch.nn as nn
 
@@ -102,3 +104,18 @@ if __name__ == "__main__":
     print(f"X in : {tuple(x.shape)}   (PM2.5 per node)")
     print(f"pred : {tuple(pred.shape)}   (predicted PM2.5 per node)")
     print(f"first 5 predictions: {pred[:5, 0].detach().numpy().round(2)}")
+
+    # --- save results: one timestamped folder per run, so nothing overwrites ---
+    import pandas as pd
+    from datetime import datetime
+    run_id = datetime.now().strftime("%Y%m%d_%H%M%S")          # e.g. 20260705_2210_03
+    run_dir = Path(__file__).resolve().parent / "outputs" / "runs" / run_id
+    run_dir.mkdir(parents=True, exist_ok=True)
+    results = pd.DataFrame({
+        "station_id": ids,
+        "pm25_in":    x[:, 0].numpy(),
+        "pm25_pred":  pred[:, 0].detach().numpy(),
+    })
+    out_path = run_dir / "predictions.csv"
+    results.to_csv(out_path, index_label="node")
+    print(f"[saved] predictions -> {out_path}")
