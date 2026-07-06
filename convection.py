@@ -42,12 +42,16 @@ class ConvectionModule(nn.Module):
         self.msg_mlp  = mlp(2 * hidden, hidden, hidden)  # [neighbour, edge] -> one message
         self.upd_mlp  = mlp(2 * hidden, out_dim, hidden)  # [combined, message] -> node output
 
-    def forward(self, x, edge_index, edge_attr):
+    def forward(self, x, edge_index, edge_attr, edge_gate=None):
         src, dst = edge_index                       # message flows src -> dst
         h = self.node_mlp(x)                        # [N, H]
         e = self.edge_mlp(edge_attr)                # [E, H]
         # one message per edge: what neighbour `src` tells `dst`, shaped by the wind
         m = self.msg_mlp(torch.cat([h[src], e], dim=1))   # [E, H]
+        # ELEVATION GATE: dampen the message when the pair differs in height. one
+        # shared scalar per edge (see elevation.py); None -> ungated (gate==1).
+        if edge_gate is not None:
+            m = m * edge_gate[:, None]
         # aggregate: sum each node's incoming messages
         agg = torch.zeros_like(h).index_add_(0, dst, m)   # [N, H]
         # RESIDUAL: fold the node's own features back so neighbours don't swamp it

@@ -52,6 +52,7 @@ STEPS_PER_EPOCH = 64  # random timesteps sampled per epoch
 LR = 0.01
 UNKNOWN = 0.0  # placeholder fed for hidden/missing nodes (in z-space)
 EXCEED_UG = 35.4  # PM2.5 exceedance threshold for the ROC-AUC label (EPA USG)
+USE_ELEVATION = True  # elevation gate on/off (CLI: --no-elevation zeroes Δelev -> gate=1)
 
 
 # ---------------------------------------------------------------------------
@@ -147,6 +148,11 @@ def main():
     ids, pm, observed, edge_index, edge_weight, edge_attr_t, edge_delev = build_static_graph()
     N = len(ids)
 
+    # elevation-gate toggle: zeroing Δelev makes gate=exp(0)=1 everywhere (exact
+    # no-op), so --no-elevation is a clean ablation against the identical model.
+    delev = edge_delev if USE_ELEVATION else torch.zeros_like(edge_delev)
+    print(f"[config] elevation_gate={'ON' if USE_ELEVATION else 'OFF'}")
+
     # normalise in log1p space using ONLY observed training cells (no leakage).
     T = len(pm)
     n_val = int(T * VAL_FRAC)
@@ -178,7 +184,7 @@ def main():
 
         x = z_t[t].clone().reshape(-1, 1)
         x[target_nodes, 0] = UNKNOWN  # hide them from the input
-        pred = model(x, edge_index, edge_weight, edge_attr_t[t], edge_delev)  # this hour's wind + elevation gate
+        pred = model(x, edge_index, edge_weight, edge_attr_t[t], delev)  # this hour's wind + elevation gate
         return loss_fn(pred[target_nodes, 0], z_t[t][target_nodes])
 
     print(
@@ -234,7 +240,7 @@ def main():
             target_nodes = known[torch.randperm(len(known))[:n_hide]]
             x = z_t[t].clone().reshape(-1, 1)
             x[target_nodes, 0] = UNKNOWN
-            pred_z = model(x, edge_index, edge_weight, edge_attr_t[t], edge_delev)[:, 0]
+            pred_z = model(x, edge_index, edge_weight, edge_attr_t[t], delev)[:, 0]
             for node in target_nodes.tolist():
                 true_ug = np.expm1(z[t, node] * sigma + mu)
                 pred_ug = np.expm1(pred_z[node].item() * sigma + mu)
@@ -274,13 +280,15 @@ def main():
     )
 
     run_id = datetime.now().strftime("%Y%m%d_%H%M%S")
-    run_dir = Path(__file__).resolve().parent / "outputs" / "runs" / f"train_{run_id}"
+    elev_tag = "elevON" if USE_ELEVATION else "elevOFF"   # folder says which config
+    run_dir = Path(__file__).resolve().parent / "outputs" / "runs" / f"train_{run_id}_{elev_tag}"
     run_dir.mkdir(parents=True, exist_ok=True)
 
     # the numbers we actually read: a small metrics.json summarising the run,
     # plus the settings that produced it so a folder is self-explaining.
     metrics = {
         "run_id": run_id,
+        "use_elevation": USE_ELEVATION,
         "n_nodes": int(N),
         "epochs": EPOCHS,
         "val_frac": VAL_FRAC,
@@ -363,4 +371,12 @@ def plot_results(hist, ev, mae, baseline, corr, run_dir: Path):
 
 
 if __name__ == "__main__":
+    import argparse
+
+    p = argparse.ArgumentParser(description="train GraPhyNet PM2.5 imputer")
+    p.add_argument("--no-elevation", action="store_true",
+                   help="disable the elevation gate (Δelev=0 -> gate=1); for ablation")
+    a = p.parse_args()
+    if a.no_elevation:
+        USE_ELEVATION = False
     main()
