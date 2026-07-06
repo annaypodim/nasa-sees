@@ -33,9 +33,8 @@ import numpy as np
 import pandas as pd
 import torch
 
-import build_graph as bg
+import build_graph2 as bg
 import preprocessing as pp
-from convection import edge_bearings, wind_edge_features
 from diffusion import inverse_distance_weights
 from model import GraPhyNet
 
@@ -55,34 +54,76 @@ UNKNOWN = 0.0  # placeholder fed for hidden/missing nodes (in z-space)
 # graph setup  (same static topology model.py builds, via preprocessing)
 # ---------------------------------------------------------------------------
 def build_static_graph():
-    """Return everything that doesn't change across timesteps + the node tables."""
-    long_df = bg.load_sensor_data()
-    ids = sorted(long_df["station_id"].unique())
+    """Rebuild the graph from build_graph2's pipeline + return node/edge tables.
+
+    Unlike the old placeholder (one city-wide wind for every edge, every hour),
+    this carries build_graph2's REAL per-sensor wind, interpolated onto the
+    hourly grid. Everything except the wind is static (topology, distances); the
+    convection edge features are therefore time-varying -> `edge_attr_t` is
+    [T, E, 3] = [distance, wind_along, wind_speed] rather than one [E, 3].
+    """
+    cfg = bg.GROUP_CONFIG[bg.SENSOR_SET]
+
+    coords = bg.parse_sensor_coords(bg.COORDS_FILE)
+    coords = coords[coords["group"] == bg.SENSOR_SET].sort_values("station_id")
+
+    long_pm = bg.load_air_quality(cfg["purple_air_dir"], coords["station_id"].tolist())
+    # keep only ids present in BOTH coordinates and air-quality data
+    station_ids = sorted(set(coords["station_id"]) & set(long_pm["station_id"]))
+    coords = coords[coords["station_id"].isin(station_ids)].sort_values("station_id")
+    station_ids = coords["station_id"].tolist()
+
     pm_raw = (
-        long_df.pivot_table(index="timestamp", columns="station_id", values="pm25")
-        .reindex(columns=ids)
+        long_pm.pivot_table(index="timestamp", columns="station_id", values="pm25")
+        .reindex(columns=station_ids)
         .sort_index()
     )
 
-    # drop full-year duds + get the per-cell observed mask
-    pm, observed, ids, _ = pp.preprocess(pm_raw)
+    # real wind, interpolated onto the hourly PM2.5 grid (per surviving sensor)
+    u10_wide, v10_wide, has_wind = bg.load_wind(
+        cfg["wind_zip"], cfg["wind_dir"], station_ids, pm_raw.index
+    )
 
-    coords = bg.get_coordinates(ids)
+    # drop full-year duds + get the per-cell observed mask
+    pm, observed, kept_ids, _ = pp.preprocess(pm_raw)
+
+    # restrict everything to the surviving nodes; node order = sorted kept ids
+    coords = coords[coords["station_id"].isin(kept_ids)].sort_values("station_id")
     ids = coords["station_id"].tolist()
-    x_m, y_m = bg.project(coords["lat"].to_numpy(), coords["lon"].to_numpy())
     pm = pm.reindex(columns=ids)
     observed = observed.reindex(columns=ids)
+    u10_wide = u10_wide.reindex(columns=ids)
+    v10_wide = v10_wide.reindex(columns=ids)
 
+    x_m, y_m = bg.project(coords["lat"].to_numpy(), coords["lon"].to_numpy())
     edge_index = bg.knn_edges(x_m, y_m, bg.K)
     dist = bg.distance_matrix(x_m, y_m)
     edge_dist = np.array([dist[i, j] for i, j in edge_index.t()])
     edge_weight = inverse_distance_weights(torch.tensor(edge_dist, dtype=torch.float))
 
-    bearing = edge_bearings(x_m, y_m, edge_index.numpy())
-    WIND_DIR, WIND_SPEED = np.deg2rad(270.0), 3.0  # one city-wide wind (placeholder)
-    edge_attr = wind_edge_features(edge_dist, bearing, WIND_DIR, WIND_SPEED)
+    # per-timestep convection features from the REAL interpolated wind field:
+    # project each edge's mean-endpoint wind vector onto the edge direction, so
+    # wind_along = +speed with the wind (src->dst), -speed against, 0 crosswind.
+    src, dst = edge_index.numpy()
+    dx, dy = x_m[dst] - x_m[src], y_m[dst] - y_m[src]
+    inv_len = 1.0 / np.maximum(np.hypot(dx, dy), 1e-9)
+    ux, uy = dx * inv_len, dy * inv_len  # unit edge direction (src -> dst)
 
-    return ids, pm, observed, edge_index, edge_weight, edge_attr
+    U, V = u10_wide.to_numpy(), v10_wide.to_numpy()  # [T, N]
+    u_edge = 0.5 * (U[:, src] + U[:, dst])           # [T, E] mean wind on the edge
+    v_edge = 0.5 * (V[:, src] + V[:, dst])
+    speed = np.hypot(u_edge, v_edge)                              # [T, E]
+    wind_along = u_edge * ux[None, :] + v_edge * uy[None, :]      # [T, E]
+    dist_col = np.broadcast_to(edge_dist, speed.shape)            # [T, E]
+    edge_attr_t = torch.tensor(
+        np.stack([dist_col, wind_along, speed], axis=-1), dtype=torch.float
+    )  # [T, E, 3]
+
+    print(
+        f"[graph] set={bg.SENSOR_SET!r}  nodes={len(ids)}  "
+        f"edges={edge_index.shape[1]}  timesteps={len(pm)}  has_wind={has_wind}"
+    )
+    return ids, pm, observed, edge_index, edge_weight, edge_attr_t
 
 
 # ---------------------------------------------------------------------------
@@ -92,7 +133,7 @@ def main():
     torch.manual_seed(SEED)
     rng = np.random.default_rng(SEED)
 
-    ids, pm, observed, edge_index, edge_weight, edge_attr = build_static_graph()
+    ids, pm, observed, edge_index, edge_weight, edge_attr_t = build_static_graph()
     N = len(ids)
 
     # normalise in log1p space using ONLY observed training cells (no leakage).
@@ -111,7 +152,7 @@ def main():
     z_t = torch.tensor(z, dtype=torch.float)
     obs_t = torch.tensor(obs)
 
-    model = GraPhyNet(node_in=1, edge_in=edge_attr.shape[1], hidden=8, layers=3)
+    model = GraPhyNet(node_in=1, edge_in=edge_attr_t.shape[-1], hidden=8, layers=3)
     opt = torch.optim.Adam(model.parameters(), lr=LR)
     loss_fn = torch.nn.MSELoss()
 
@@ -126,7 +167,7 @@ def main():
 
         x = z_t[t].clone().reshape(-1, 1)
         x[target_nodes, 0] = UNKNOWN  # hide them from the input
-        pred = model(x, edge_index, edge_weight, edge_attr)
+        pred = model(x, edge_index, edge_weight, edge_attr_t[t])  # this hour's wind
         return loss_fn(pred[target_nodes, 0], z_t[t][target_nodes])
 
     print(
@@ -182,7 +223,7 @@ def main():
             target_nodes = known[torch.randperm(len(known))[:n_hide]]
             x = z_t[t].clone().reshape(-1, 1)
             x[target_nodes, 0] = UNKNOWN
-            pred_z = model(x, edge_index, edge_weight, edge_attr)[:, 0]
+            pred_z = model(x, edge_index, edge_weight, edge_attr_t[t])[:, 0]
             for node in target_nodes.tolist():
                 true_ug = np.expm1(z[t, node] * sigma + mu)
                 pred_ug = np.expm1(pred_z[node].item() * sigma + mu)
