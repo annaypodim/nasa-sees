@@ -35,7 +35,7 @@ def mlp(in_dim: int, out_dim: int, hidden: int) -> nn.Sequential:
     )
 
 
-class FusionModule(nn.Module):
+class Fusion(nn.Module):
     def __init__(self, dim: int, hidden: int = 8):
         super().__init__()
         # in: the three outputs concatenated (3*dim).  out: one score per module.
@@ -87,7 +87,7 @@ if __name__ == "__main__":
     local = LocalModule(node_in=1, out_dim=DIM)
     diffusion = DiffusionModule(in_dim=1, out_dim=DIM)
     convection = ConvectionModule(node_in=1, edge_in=edge_attr.shape[1], out_dim=DIM)
-    fusion = FusionModule(dim=DIM)
+    fusion = Fusion(dim=DIM)
 
     local_out = local(x, edge_index, edge_weight)
     diffusion_out = diffusion(x, edge_index, edge_weight)
