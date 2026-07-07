@@ -53,6 +53,8 @@ LR = 0.01
 UNKNOWN = 0.0  # placeholder fed for hidden/missing nodes (in z-space)
 EXCEED_UG = 35.4  # PM2.5 exceedance threshold for the ROC-AUC label (EPA USG)
 USE_ELEVATION = True  # elevation gate on/off (CLI: --no-elevation zeroes Δelev -> gate=1)
+STRICT_INPUTS = True  # abort if PM2.5 / distance / wind inputs are missing or all-zero
+#                       (CLI: --allow-missing-inputs runs anyway with zero-filled features)
 
 
 # ---------------------------------------------------------------------------
@@ -133,7 +135,53 @@ def build_static_graph():
         f"[graph] set={bg.SENSOR_SET!r}  nodes={len(ids)}  "
         f"edges={edge_index.shape[1]}  timesteps={len(pm)}  has_wind={has_wind}"
     )
+
+    validate_inputs(pm, observed, edge_dist, edge_attr_t, has_wind)
     return ids, pm, observed, edge_index, edge_weight, edge_attr_t, edge_delev
+
+
+# ---------------------------------------------------------------------------
+# input guard: fail loudly instead of silently training on zero-filled inputs
+# ---------------------------------------------------------------------------
+def validate_inputs(pm, observed, edge_dist, edge_attr_t, has_wind):
+    """Raise if a required model input (PM2.5, distance, wind) is missing or
+    degenerate. Wind especially fails silently: build_graph2 zero-fills absent
+    wind, so a whole physics channel can vanish without any error. Bypass with
+    STRICT_INPUTS=False (CLI --allow-missing-inputs) for intentional ablations.
+    """
+    if not STRICT_INPUTS:
+        if not has_wind:
+            print("[warn] STRICT_INPUTS off: wind is missing -> zero-filled "
+                  "(convection runs on distance only)")
+        return
+
+    problems = []
+    # --- PM2.5 -------------------------------------------------------------
+    if pm.shape[1] == 0 or int(observed.to_numpy().sum()) == 0:
+        problems.append("PM2.5: no observed readings after preprocessing")
+    fully_missing = [c for c in pm.columns if int(observed[c].sum()) == 0]
+    if fully_missing:
+        problems.append(f"PM2.5: {len(fully_missing)} node(s) with zero observed "
+                        f"cells: {fully_missing}")
+    # --- distance ----------------------------------------------------------
+    if not np.isfinite(edge_dist).all():
+        problems.append("distance: non-finite edge distance(s)")
+    elif not (edge_dist > 0).all():
+        problems.append("distance: zero-length edge(s) (duplicate sensor coords?)")
+    # --- wind (the silent one) ---------------------------------------------
+    if not has_wind:
+        problems.append("wind: no wind files found -> edge wind features are all "
+                        "zero (convection blind to wind)")
+    elif float(edge_attr_t[..., 1:3].abs().sum()) == 0.0:
+        problems.append("wind: wind_along/wind_speed are identically zero")
+
+    if problems:
+        raise ValueError(
+            "STRICT_INPUTS: required model inputs are missing or degenerate:\n  - "
+            + "\n  - ".join(problems)
+            + "\n\nFix the data, or pass --allow-missing-inputs (STRICT_INPUTS=False) "
+              "to train anyway with zero-filled features."
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -376,7 +424,12 @@ if __name__ == "__main__":
     p = argparse.ArgumentParser(description="train GraPhyNet PM2.5 imputer")
     p.add_argument("--no-elevation", action="store_true",
                    help="disable the elevation gate (Δelev=0 -> gate=1); for ablation")
+    p.add_argument("--allow-missing-inputs", action="store_true",
+                   help="don't abort when wind/distance/PM2.5 are missing; "
+                        "train anyway with zero-filled features")
     a = p.parse_args()
     if a.no_elevation:
         USE_ELEVATION = False
+    if a.allow_missing_inputs:
+        STRICT_INPUTS = False
     main()
