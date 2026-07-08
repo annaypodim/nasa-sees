@@ -114,6 +114,17 @@ CITY_CONFIG = {
             ),
         },
     ),
+    "pittsburgh": dict(
+        coords_file=DATA_DIR / "pittsburgh" / "coords" / "pittsburgh_loc_elev.txt",
+        utm_crs="EPSG:32617",          # UTM zone 17N (Pittsburgh, PA)
+        groups={
+            "urban": dict(
+                purple_air_dir=DATA_DIR / "pittsburgh" / "pm25",
+                wind_zip=DATA_DIR / "pittsburgh" / "uwind_pittsburgh.zip.zip",
+                wind_dir=DATA_DIR / "pittsburgh" / "wind" / "pittsburgh",
+            ),
+        },
+    ),
     "slc": dict(
         coords_file=DATA_DIR / "slc" / "coords" / "sensor_lat_long_alt",
         utm_crs="EPSG:32612",          # UTM zone 12N (Salt Lake Valley, UT)
@@ -174,7 +185,27 @@ def parse_sensor_coords(path: Path) -> pd.DataFrame:
     bracket-count from the next "[" to its matching "]" to grab that group's
     full literal list (ast.literal_eval handles the actual parsing).
     """
-    lines = path.read_text().splitlines()
+    text = path.read_text()
+
+    # Pittsburgh variant: a single JSON-ish `"data" : [ [id, lat, lon, alt], ... ]`
+    # block (no group headers). The generic line-scanner below can't handle it
+    # because the array's opening "[" shares the skipped `"data"` line, so we
+    # peel that one array out explicitly and treat every sensor as one group.
+    if '"data"' in text:
+        arr = text[text.index("[", text.index('"data"')):]
+        records = ast.literal_eval(arr.rstrip().rstrip("}").strip())
+        return pd.DataFrame([
+            {
+                "station_id": str(int(sensor_id)),
+                "lat": float(lat),
+                "lon": float(lon),
+                "elevation": alt_ft * FEET_TO_M,   # -> metres
+                "group": "urban",
+            }
+            for sensor_id, lat, lon, alt_ft in records
+        ])
+
+    lines = text.splitlines()
     rows = []
     pending_name = None
     i = 0
@@ -224,7 +255,10 @@ def load_air_quality(purple_air_dir: Path, station_ids: list[str]) -> pd.DataFra
         if not m or m.group(1) not in wanted:
             continue
         station_id = m.group(1)
-        df = pd.read_csv(csv_path)
+        try:
+            df = pd.read_csv(csv_path)
+        except pd.errors.EmptyDataError:
+            continue  # zero-byte / header-less file (some sensors export nothing)
         if df.empty or "pm2.5_atm" not in df.columns:
             continue  # several sensors returned no data in range
         rows.append(pd.DataFrame({
