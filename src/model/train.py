@@ -55,6 +55,11 @@ EXCEED_UG = 35.4  # PM2.5 exceedance threshold for the ROC-AUC label (EPA USG)
 USE_ELEVATION = True  # elevation gate on/off (CLI: --no-elevation zeroes Δelev -> gate=1)
 STRICT_INPUTS = True  # abort if PM2.5 / distance / wind inputs are missing or all-zero
 #                       (CLI: --allow-missing-inputs runs anyway with zero-filled features)
+SYNTH_ELEV_K = 0.0  # SANITY TEST: inject a known elevation-dependent PM2.5 offset
+#   (ug/m3 per metre of elevation above the node mean) so the field genuinely
+#   decouples by height. If the gate works, ON should beat OFF here; if ON==OFF
+#   even on this planted gradient, the module -- not the data -- is the problem.
+#   CLI: --synth-elev-grad K  (0 = off, the real data). See notes below.
 
 
 # ---------------------------------------------------------------------------
@@ -137,7 +142,7 @@ def build_static_graph():
     )
 
     validate_inputs(pm, observed, edge_dist, edge_attr_t, has_wind)
-    return ids, pm, observed, edge_index, edge_weight, edge_attr_t, edge_delev
+    return ids, pm, observed, edge_index, edge_weight, edge_attr_t, edge_delev, elev
 
 
 # ---------------------------------------------------------------------------
@@ -193,7 +198,7 @@ def main():
     torch.manual_seed(SEED)
     rng = np.random.default_rng(SEED)
 
-    ids, pm, observed, edge_index, edge_weight, edge_attr_t, edge_delev = build_static_graph()
+    ids, pm, observed, edge_index, edge_weight, edge_attr_t, edge_delev, elev = build_static_graph()
     N = len(ids)
 
     # elevation-gate toggle: zeroing Δelev makes gate=exp(0)=1 everywhere (exact
@@ -209,6 +214,24 @@ def main():
 
     values = pm.to_numpy(dtype=np.float64)  # [T, N], already NaN-filled
     obs = observed.to_numpy()  # [T, N] bool
+
+    # --- SANITY TEST: plant a known elevation gradient -----------------------
+    # Add a per-node offset K*(elev - mean_elev) to the OBSERVED cells only, so
+    # the true field decouples by height: same-elevation neighbours agree, far-
+    # apart-in-height neighbours are biased. This is exactly the structure the
+    # elevation gate exists to exploit -- a well-mixed regime (real rural data)
+    # has none of it, which is why ON==OFF there. If ON still can't beat OFF on
+    # THIS field, the gate itself (architecture), not the data, is the problem.
+    if SYNTH_ELEV_K != 0.0:
+        offset = SYNTH_ELEV_K * (elev - elev.mean())  # [N] ug/m3
+        values = values + np.where(obs, offset[None, :], 0.0)
+        values = np.clip(values, 0, None)
+        print(
+            f"[synth] planted elevation gradient K={SYNTH_ELEV_K} ug/m3 per m -> "
+            f"node offsets span [{offset.min():+.2f}, {offset.max():+.2f}] ug/m3 "
+            f"(elev spread {elev.max() - elev.min():.0f} m)"
+        )
+
     logv = np.log1p(np.clip(values, 0, None))
     train_obs_vals = logv[np.ix_(train_ts, np.arange(N))][obs[train_ts]]
     mu, sigma = train_obs_vals.mean(), train_obs_vals.std() + 1e-8
@@ -357,6 +380,7 @@ def main():
     print(f"[saved] raw csv  -> {run_dir / 'predictions.csv'}")
 
     plot_results(hist, ev, mae, baseline, corr, run_dir)
+    return metrics
 
 
 def plot_results(hist, ev, mae, baseline, corr, run_dir: Path):
@@ -427,9 +451,15 @@ if __name__ == "__main__":
     p.add_argument("--allow-missing-inputs", action="store_true",
                    help="don't abort when wind/distance/PM2.5 are missing; "
                         "train anyway with zero-filled features")
+    p.add_argument("--synth-elev-grad", type=float, default=0.0, metavar="K",
+                   help="sanity test: inject a known PM2.5 gradient of K ug/m3 "
+                        "per metre of elevation (0=off/real data). Run with "
+                        "--synth-elev-grad K both WITH and WITHOUT --no-elevation "
+                        "to see if the gate can recover a planted gradient.")
     a = p.parse_args()
     if a.no_elevation:
         USE_ELEVATION = False
     if a.allow_missing_inputs:
         STRICT_INPUTS = False
+    SYNTH_ELEV_K = a.synth_elev_grad
     main()
