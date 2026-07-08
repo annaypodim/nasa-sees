@@ -65,6 +65,20 @@ DROP_ABOVE_SIGMA = 1.0
 
 VIZ_DIR = bg.OUT_DIR / "viz" / RUN_LABEL if RUN_LABEL else bg.OUT_DIR / "viz"
 
+# filename prefix so every figure is self-describing even out of its folder:
+# "<city>-<group>-<run>_<figure>.png", e.g. slc-urban-winter_8_topo_correlation.png.
+# TAG="" -> auto-compose from the live city/group + RUN_LABEL at save time.
+TAG = ""
+
+
+def _prefix() -> str:
+    if TAG:
+        return TAG
+    parts = [bg.CITY, bg.SENSOR_SET]
+    if RUN_LABEL:
+        parts.append(RUN_LABEL.replace(" ", "-"))
+    return "-".join(parts)
+
 
 # ---------------------------------------------------------------------------
 # load once: the wide [time x sensor] PM2.5 table + coords, via the real loaders
@@ -447,7 +461,7 @@ def fig_monthly_by_sensor(pm_wide, ids):
 def _save(fig, name):
     VIZ_DIR.mkdir(parents=True, exist_ok=True)
     fig.tight_layout()
-    path = VIZ_DIR / name
+    path = VIZ_DIR / f"{_prefix()}_{name}"
     fig.savefig(path, dpi=130)
     plt.close(fig)
     print(f"[saved] {path}")
