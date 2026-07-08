@@ -224,7 +224,7 @@ def fig_topo_correlation(pm_wide, coords, ids, zoom):
     ax1.legend(loc="best", fontsize=8)
 
     dv.VIZ_DIR.mkdir(parents=True, exist_ok=True)
-    out = dv.VIZ_DIR / "8_topo_correlation.png"
+    out = dv.VIZ_DIR / f"{dv._prefix()}_8_topo_correlation.png"
     fig.tight_layout()
     fig.savefig(out, dpi=150, bbox_inches="tight")
     plt.close(fig)

@@ -142,7 +142,7 @@ def build_static_graph():
     )
 
     validate_inputs(pm, observed, edge_dist, edge_attr_t, has_wind)
-    return ids, pm, observed, edge_index, edge_weight, edge_attr_t, edge_delev, elev
+    return ids, pm, observed, edge_index, edge_weight, edge_attr_t, edge_delev, elev, has_wind
 
 
 # ---------------------------------------------------------------------------
@@ -198,7 +198,7 @@ def main():
     torch.manual_seed(SEED)
     rng = np.random.default_rng(SEED)
 
-    ids, pm, observed, edge_index, edge_weight, edge_attr_t, edge_delev, elev = build_static_graph()
+    ids, pm, observed, edge_index, edge_weight, edge_attr_t, edge_delev, elev, has_wind = build_static_graph()
     N = len(ids)
 
     # elevation-gate toggle: zeroing Δelev makes gate=exp(0)=1 everywhere (exact
@@ -352,13 +352,20 @@ def main():
 
     run_id = datetime.now().strftime("%Y%m%d_%H%M%S")
     elev_tag = "elevON" if USE_ELEVATION else "elevOFF"   # folder says which config
-    run_dir = Path(__file__).resolve().parents[2] / "outputs" / "runs" / f"train_{run_id}_{elev_tag}"
+    # trace the run to its data: which city + which sensor group produced it,
+    # e.g. train_20260707_..._slc-urban_elevON  (so runs never blur together).
+    data_tag = f"{bg.CITY}-{bg.SENSOR_SET}"
+    run_dir = (Path(__file__).resolve().parents[2] / "outputs" / "runs" /
+               f"train_{run_id}_{data_tag}_{elev_tag}")
     run_dir.mkdir(parents=True, exist_ok=True)
 
     # the numbers we actually read: a small metrics.json summarising the run,
     # plus the settings that produced it so a folder is self-explaining.
     metrics = {
         "run_id": run_id,
+        "city": bg.CITY,
+        "sensor_set": bg.SENSOR_SET,
+        "has_wind": bool(has_wind),
         "use_elevation": USE_ELEVATION,
         "n_nodes": int(N),
         "epochs": EPOCHS,

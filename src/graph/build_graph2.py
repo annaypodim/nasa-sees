@@ -86,31 +86,70 @@ DATA_DIR = ROOT / "data"
 OUT_DIR = ROOT / "outputs"
 MATRIX_DIR = OUT_DIR / "matrices"
 
-# choose which named group in sensor_lat_long_alt to build a graph for.
-SENSOR_SET = "urban"   # "urban" or "rural"
+# choose which CITY to build, then which named group within its coords file.
+# Switching city also swaps the coords file, PM2.5/wind dirs, AND the UTM zone
+# (metric projection) -- SLC and Boulder are in different zones, so a wrong zone
+# would silently distort every edge distance.
+CITY = "boulder"       # "boulder" or "slc"
+SENSOR_SET = "urban"   # which group in that city's coords file: "urban" / "rural"
 
-COORDS_FILE = DATA_DIR / "boulder" / "coords" / "sensor_lat_long_alt"
-
-# per-group file locations, all under data/boulder/:
-#   urban <-> wind/group_a.zip + wind/urban/ + pm25/urban/
-#   rural <-> wind/group_b.zip + wind/rural/ + pm25/rural/
-GROUP_CONFIG = {
-    "urban": dict(
-        purple_air_dir=DATA_DIR / "boulder" / "pm25" / "urban",
-        wind_zip=DATA_DIR / "boulder" / "wind" / "group_a.zip",
-        wind_dir=DATA_DIR / "boulder" / "wind" / "urban",
+# per-city bundle: coords file + UTM zone + per-group PM2.5/wind locations.
+#   Boulder: two groups (urban/rural), UTM 13N, has wind.
+#   SLC:     one group (urban), UTM 12N, NO wind yet -> load_wind zero-fills and
+#            flags it (have_wind=False), so the graph still builds.
+CITY_CONFIG = {
+    "boulder": dict(
+        coords_file=DATA_DIR / "boulder" / "coords" / "sensor_lat_long_alt",
+        utm_crs="EPSG:32613",          # UTM zone 13N (Boulder, CO)
+        groups={
+            "urban": dict(
+                purple_air_dir=DATA_DIR / "boulder" / "pm25" / "urban",
+                wind_zip=DATA_DIR / "boulder" / "wind" / "group_a.zip",
+                wind_dir=DATA_DIR / "boulder" / "wind" / "urban",
+            ),
+            "rural": dict(
+                purple_air_dir=DATA_DIR / "boulder" / "pm25" / "rural",
+                wind_zip=DATA_DIR / "boulder" / "wind" / "group_b.zip",
+                wind_dir=DATA_DIR / "boulder" / "wind" / "rural",
+            ),
+        },
     ),
-    "rural": dict(
-        purple_air_dir=DATA_DIR / "boulder" / "pm25" / "rural",
-        wind_zip=DATA_DIR / "boulder" / "wind" / "group_b.zip",
-        wind_dir=DATA_DIR / "boulder" / "wind" / "rural",
+    "slc": dict(
+        coords_file=DATA_DIR / "slc" / "coords" / "sensor_lat_long_alt",
+        utm_crs="EPSG:32612",          # UTM zone 12N (Salt Lake Valley, UT)
+        groups={
+            "urban": dict(
+                purple_air_dir=DATA_DIR / "slc" / "pm25" / "urban",
+                # no wind data yet: these paths don't exist, load_wind zero-fills.
+                wind_zip=DATA_DIR / "slc" / "wind" / "none.zip",
+                wind_dir=DATA_DIR / "slc" / "wind" / "urban",
+            ),
+        },
     ),
 }
 
+
+def use_city(name: str) -> None:
+    """Point the module globals (COORDS_FILE, GROUP_CONFIG, UTM_CRS) at one city.
+
+    Called once at import for CITY; call again at runtime to switch city in a
+    driver script (mirrors how SENSOR_SET is overridden), e.g.
+        bg.use_city("slc"); bg.SENSOR_SET = "urban"
+    """
+    global CITY, COORDS_FILE, GROUP_CONFIG, UTM_CRS
+    cfg = CITY_CONFIG[name]
+    CITY = name
+    COORDS_FILE = cfg["coords_file"]
+    GROUP_CONFIG = cfg["groups"]
+    UTM_CRS = cfg["utm_crs"]
+
+
 K = 5                       # each node connects to its K nearest neighbors
 LATLON_CRS = "EPSG:4326"    # world geodetic system for lat/lon coordinates (input)
-UTM_CRS = "EPSG:32613"      # UTM zone 13N -> metres (covers Boulder, CO)
 FEET_TO_M = 0.3048          # sensor_lat_long_alt altitude is in feet
+
+# derived globals for the selected CITY (COORDS_FILE / GROUP_CONFIG / UTM_CRS)
+use_city(CITY)
 
 # edge feature columns stored in edge_attr: edge_attr[:, c] is column c below.
 # distance / delev / corr are static across timesteps; wind_angle/wind_speed
