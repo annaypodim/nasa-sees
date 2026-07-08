@@ -53,6 +53,7 @@ LR = 0.01
 UNKNOWN = 0.0  # placeholder fed for hidden/missing nodes (in z-space)
 EXCEED_UG = 35.4  # PM2.5 exceedance threshold for the ROC-AUC label (EPA USG)
 USE_ELEVATION = True  # elevation gate on/off (CLI: --no-elevation zeroes Δelev -> gate=1)
+USE_CACHE = True  # load data/<city>/processed/<group> if present (CLI: --rebuild)
 STRICT_INPUTS = True  # abort if PM2.5 / distance / wind inputs are missing or all-zero
 #                       (CLI: --allow-missing-inputs runs anyway with zero-filled features)
 SYNTH_ELEV_K = 0.0  # SANITY TEST: inject a known elevation-dependent PM2.5 offset
@@ -79,25 +80,32 @@ def build_static_graph():
     coords = bg.parse_sensor_coords(bg.COORDS_FILE)
     coords = coords[coords["group"] == bg.SENSOR_SET].sort_values("station_id")
 
-    long_pm = bg.load_air_quality(cfg["purple_air_dir"], coords["station_id"].tolist())
-    # keep only ids present in BOTH coordinates and air-quality data
-    station_ids = sorted(set(coords["station_id"]) & set(long_pm["station_id"]))
-    coords = coords[coords["station_id"].isin(station_ids)].sort_values("station_id")
-    station_ids = coords["station_id"].tolist()
+    # Prefer the saved processed cache (scripts/build_processed.py) so we don't
+    # re-parse every raw CSV each run. USE_CACHE=False (CLI --rebuild) forces a
+    # fresh preprocess from the raw data.
+    cached = pp.load_processed(bg.DATA_DIR, bg.CITY, bg.SENSOR_SET) if USE_CACHE else None
+    if cached is not None:
+        pm, observed, _meta = cached
+        kept_ids = list(map(str, pm.columns))
+        print(f"[cache] loaded processed {bg.CITY}-{bg.SENSOR_SET}: "
+              f"{pm.shape[0]} hours x {pm.shape[1]} nodes "
+              f"(built {_meta.get('generated_at', '?')})")
+    else:
+        long_pm = bg.load_air_quality(cfg["purple_air_dir"], coords["station_id"].tolist())
+        # keep only ids present in BOTH coordinates and air-quality data
+        station_ids = sorted(set(coords["station_id"]) & set(long_pm["station_id"]))
+        pm_raw = (
+            long_pm.pivot_table(index="timestamp", columns="station_id", values="pm25")
+            .reindex(columns=station_ids)
+            .sort_index()
+        )
+        # drop full-year duds + get the per-cell observed mask
+        pm, observed, kept_ids, _ = pp.preprocess(pm_raw)
 
-    pm_raw = (
-        long_pm.pivot_table(index="timestamp", columns="station_id", values="pm25")
-        .reindex(columns=station_ids)
-        .sort_index()
-    )
-
-    # real wind, interpolated onto the hourly PM2.5 grid (per surviving sensor)
+    # wind is interpolated onto the (now-known) PM2.5 timeline per surviving sensor
     u10_wide, v10_wide, has_wind = bg.load_wind(
-        cfg["wind_zip"], cfg["wind_dir"], station_ids, pm_raw.index
+        cfg["wind_zip"], cfg["wind_dir"], kept_ids, pm.index
     )
-
-    # drop full-year duds + get the per-cell observed mask
-    pm, observed, kept_ids, _ = pp.preprocess(pm_raw)
 
     # restrict everything to the surviving nodes; node order = sorted kept ids
     coords = coords[coords["station_id"].isin(kept_ids)].sort_values("station_id")
@@ -455,6 +463,9 @@ if __name__ == "__main__":
     p = argparse.ArgumentParser(description="train GraPhyNet PM2.5 imputer")
     p.add_argument("--no-elevation", action="store_true",
                    help="disable the elevation gate (Δelev=0 -> gate=1); for ablation")
+    p.add_argument("--rebuild", action="store_true",
+                   help="ignore the processed-data cache and preprocess the raw "
+                        "CSVs fresh (USE_CACHE=False)")
     p.add_argument("--allow-missing-inputs", action="store_true",
                    help="don't abort when wind/distance/PM2.5 are missing; "
                         "train anyway with zero-filled features")
@@ -464,6 +475,8 @@ if __name__ == "__main__":
                         "--synth-elev-grad K both WITH and WITHOUT --no-elevation "
                         "to see if the gate can recover a planted gradient.")
     a = p.parse_args()
+    if a.rebuild:
+        USE_CACHE = False
     if a.no_elevation:
         USE_ELEVATION = False
     if a.allow_missing_inputs:

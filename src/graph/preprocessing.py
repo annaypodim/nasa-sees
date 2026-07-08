@@ -30,6 +30,10 @@ run the demo:   .venv/bin/python preprocessing.py
 """
 from __future__ import annotations
 
+import json
+from datetime import datetime, timezone
+from pathlib import Path
+
 import pandas as pd
 
 
@@ -162,6 +166,62 @@ def preprocess(pm_wide: pd.DataFrame,
               f"({obs / cells:.1%}) -> only these can enter the loss; "
               f"the rest are filled inputs ({fill_method}), never targets")
     return filled, observed, kept_ids, dropped
+
+
+# ---------------------------------------------------------------------------
+# 3. persist the processed tables so runs stop recomputing them
+# ---------------------------------------------------------------------------
+# saved as CSV (not parquet: no pyarrow dependency, and CSV is human-readable +
+# git-diffable, which is the point -- one traceable artifact per city-group).
+def processed_dir(data_dir: Path, city: str, sensor_set: str) -> Path:
+    return Path(data_dir) / city / "processed" / sensor_set
+
+
+def save_processed(filled: pd.DataFrame, observed: pd.DataFrame,
+                   data_dir: Path, city: str, sensor_set: str,
+                   dropped_ids: list | None = None, extra: dict | None = None) -> Path:
+    """Write filled/observed tables + a meta.json describing how they were made.
+
+    Returns the directory written. `filled` and `observed` share index/columns;
+    meta.json records the settings + kept/dropped ids so the artifact is
+    self-explaining (which raw data + which thresholds produced it).
+    """
+    out = processed_dir(data_dir, city, sensor_set)
+    out.mkdir(parents=True, exist_ok=True)
+    filled.to_csv(out / "pm_filled.csv", index_label="timestamp")
+    observed.astype(int).to_csv(out / "observed.csv", index_label="timestamp")
+    meta = {
+        "city": city,
+        "sensor_set": sensor_set,
+        "generated_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+        "n_timesteps": int(filled.shape[0]),
+        "n_nodes": int(filled.shape[1]),
+        "kept_ids": list(map(str, filled.columns)),
+        "dropped_ids": list(map(str, dropped_ids or [])),
+        "coverage_threshold": COVERAGE_THRESHOLD,
+        "plausible_range_ug": [PLAUSIBLE_MIN_UG, PLAUSIBLE_MAX_UG],
+        "fill_method": FILL_METHOD,
+        "observed_cells": int(observed.to_numpy().sum()),
+        **(extra or {}),
+    }
+    (out / "meta.json").write_text(json.dumps(meta, indent=2))
+    return out
+
+
+def load_processed(data_dir: Path, city: str, sensor_set: str):
+    """Return (filled, observed, meta) if a processed cache exists, else None.
+
+    observed comes back boolean; both tables use a parsed DatetimeIndex so they
+    drop straight into the training pipeline in place of a fresh preprocess().
+    """
+    d = processed_dir(data_dir, city, sensor_set)
+    fp, op, mp = d / "pm_filled.csv", d / "observed.csv", d / "meta.json"
+    if not (fp.exists() and op.exists()):
+        return None
+    filled = pd.read_csv(fp, index_col="timestamp", parse_dates=["timestamp"])
+    observed = pd.read_csv(op, index_col="timestamp", parse_dates=["timestamp"]).astype(bool)
+    meta = json.loads(mp.read_text()) if mp.exists() else {}
+    return filled, observed, meta
 
 
 # ---------------------------------------------------------------------------
