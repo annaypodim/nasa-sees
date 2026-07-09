@@ -55,6 +55,10 @@ EXCEED_UG = 35.4  # PM2.5 exceedance threshold for the ROC-AUC label (EPA USG)
 USE_ELEVATION = True  # elevation gate on/off (CLI: --no-elevation zeroes Δelev -> gate=1)
 USE_TEMPERATURE = True  # temperature gate on/off (CLI: --no-temperature -> node_temp=None,
 #                         an exact no-op). Silently inert if the city has no temperature.
+USE_TEMP_FEATURE = True  # temperature as a NEVER-masked node input channel (CLI:
+#                          --no-temp-feature). The target's own temperature stays
+#                          visible when its PM2.5 is hidden, so the model can predict
+#                          from it directly -- the lever the gate structurally lacks.
 USE_CACHE = True  # load data/<city>/processed/<group> if present (CLI: --rebuild)
 STRICT_INPUTS = True  # abort if PM2.5 / distance / wind inputs are missing or all-zero
 #                       (CLI: --allow-missing-inputs runs anyway with zero-filled features)
@@ -63,6 +67,26 @@ SYNTH_ELEV_K = 0.0  # SANITY TEST: inject a known elevation-dependent PM2.5 offs
 #   decouples by height. If the gate works, ON should beat OFF here; if ON==OFF
 #   even on this planted gradient, the module -- not the data -- is the problem.
 #   CLI: --synth-elev-grad K  (0 = off, the real data). See notes below.
+SYNTH_TEMP_K = 0.0  # SANITY TEST for the TEMPERATURE gate. Unlike the elevation
+#   synth (a static per-node offset a per-EDGE gate recovers from same-height
+#   neighbours), our temperature gate is per-NODE -- it can only turn a node's
+#   mixing up/down, not route from similar-temp neighbours. So we plant the
+#   signal a node gate CAN exploit: temperature controls how much a node's own
+#   spatial anomaly survives. gain = clip(1 + K*s, 0) scales each cell's anomaly
+#   about its timestep's spatial mean -- COLD (s<0) shrinks it toward the mean
+#   (trapped/flat), HOT (s>0) amplifies it. A masked COLD node then sits flat
+#   among possibly-HOT, anomalous neighbours: averaging them misleads, and only
+#   a gate that suppresses the cold node's transport recovers the flat truth.
+#   If tempON still can't beat tempOFF here, the gate architecture is the problem.
+#   CLI: --synth-temp-grad K  (0 = off, the real data).
+SYNTH_TEMPDIRECT_K = 0.0  # SANITY TEST for the temperature FEATURE. Plant PM2.5
+#   as a DIRECT function of each node's OWN temperature: value = gmean + K*20*s.
+#   A masked node's temperature stays visible, so the feature can read it and
+#   predict the value EXACTLY, while a neighbour-only baseline can't (a node's
+#   own temp isn't fully given by its neighbours). If temp_feature ON beats the
+#   bare baseline here, the feature mechanism works -- the earlier real-data null
+#   is the DATA (common-mode temperature), not the wiring.
+#   CLI: --synth-temp-direct K  (0 = off).
 
 
 # ---------------------------------------------------------------------------
@@ -160,7 +184,7 @@ def build_static_graph():
 
     validate_inputs(pm, observed, edge_dist, edge_attr_t, has_wind)
     return (ids, pm, observed, edge_index, edge_weight, edge_attr_t, edge_delev,
-            elev, has_wind, temp_wide, has_temp)
+            elev, x_m, y_m, has_wind, temp_wide, has_temp)
 
 
 # ---------------------------------------------------------------------------
@@ -217,7 +241,7 @@ def main():
     rng = np.random.default_rng(SEED)
 
     (ids, pm, observed, edge_index, edge_weight, edge_attr_t, edge_delev, elev,
-     has_wind, temp_wide, has_temp) = build_static_graph()
+     x_m, y_m, has_wind, temp_wide, has_temp) = build_static_graph()
     N = len(ids)
 
     # elevation-gate toggle: zeroing Δelev makes gate=exp(0)=1 everywhere (exact
@@ -259,6 +283,62 @@ def main():
             f"(elev spread {elev.max() - elev.min():.0f} m)"
         )
 
+    # --- SANITY TEST: plant a temperature-controlled mixing signal -----------
+    # The field a per-NODE transport gate can actually exploit needs BOTH regimes:
+    #   HOT node  -> value = global mean + a SPATIALLY SMOOTH pattern. smooth so a
+    #               hot node's (also-hot, since temperature clusters in space)
+    #               neighbours carry ~the same value -> recoverable by averaging.
+    #   COLD node -> value = global mean (flat), i.e. the UNKNOWN=0 fallback a
+    #               suppressed masked node lands on.
+    # So neighbours are informative in the hot regime and misleading in the cold
+    # regime, and ONLY the target's own temperature says which -- the gate must
+    # pass transport when hot, suppress when cold. (v1 collapsed to the spatial
+    # mean -> neighbours solved it, gate redundant. v2 amplified the rough real
+    # anomalies -> hot regime unrecoverable, so predict-the-mean won. This fixes
+    # both: a smooth, recoverable hot signal against a global-mean cold prior.)
+    # gate=exp(a*s): a>0 gives hot>1 (pass) / cold<1 (suppress), the sign we want.
+    if SYNTH_TEMP_K != 0.0 and has_temp:
+        temp_c = temp_wide.to_numpy(dtype=np.float64)
+        s_syn = np.nan_to_num(
+            (temp_c - np.nanmean(temp_c[train_ts])) / (np.nanstd(temp_c[train_ts]) + 1e-6),
+            nan=0.0,
+        )                                                  # [T, N] standardized
+        gmean = float(np.nanmean(np.where(obs, values, np.nan)[train_ts]))  # scalar prior
+        # smooth per-node spatial pattern from UTM coords: one low-frequency bump
+        # across the sensor field, so neighbours share values (recoverable).
+        xn = (x_m - x_m.mean()) / (x_m.std() + 1e-6)
+        yn = (y_m - y_m.mean()) / (y_m.std() + 1e-6)
+        pattern = np.sin(1.3 * xn) + np.cos(1.1 * yn)      # [N] smooth in space
+        pattern = SYNTH_TEMP_K * 20.0 * pattern             # -> ug/m3 amplitude
+        hot = np.clip(s_syn, 0.0, None)                     # 0 when cold, >0 when hot
+        synthetic = gmean + hot * pattern[None, :]          # cold->gmean, hot->smooth bump
+        values = np.where(obs, np.clip(synthetic, 0, None), values)
+        print(
+            f"[synth] planted temp mixing signal K={SYNTH_TEMP_K}: cold->global mean "
+            f"{gmean:.1f} ug/m3, hot-> +smooth spatial pattern "
+            f"(|amp|<={np.abs(pattern).max():.1f} ug/m3, recoverable from hot neighbours)"
+        )
+
+    # --- SANITY TEST: plant PM2.5 as a DIRECT function of each node's own temp -
+    # value = gmean + K*20*s[t,n]. The target's temperature is never masked, so
+    # the temp FEATURE can read it and predict the value exactly; a neighbour-only
+    # model cannot (a node's own temp isn't fully recoverable from neighbours).
+    # This isolates the feature's unique power -- reading the hidden node itself.
+    if SYNTH_TEMPDIRECT_K != 0.0 and has_temp:
+        temp_c = temp_wide.to_numpy(dtype=np.float64)
+        s_syn = np.nan_to_num(
+            (temp_c - np.nanmean(temp_c[train_ts])) / (np.nanstd(temp_c[train_ts]) + 1e-6),
+            nan=0.0,
+        )                                                  # [T, N] standardized
+        gmean = float(np.nanmean(np.where(obs, values, np.nan)[train_ts]))
+        synthetic = gmean + SYNTH_TEMPDIRECT_K * 20.0 * s_syn
+        values = np.where(obs, np.clip(synthetic, 0, None), values)
+        print(
+            f"[synth] planted DIRECT temp->PM2.5 K={SYNTH_TEMPDIRECT_K}: "
+            f"value = {gmean:.1f} + {SYNTH_TEMPDIRECT_K*20:.0f}*s ug/m3 "
+            f"(a node's own temperature IS its answer)"
+        )
+
     logv = np.log1p(np.clip(values, 0, None))
     train_obs_vals = logv[np.ix_(train_ts, np.arange(N))][obs[train_ts]]
     mu, sigma = train_obs_vals.mean(), train_obs_vals.std() + 1e-8
@@ -267,21 +347,42 @@ def main():
     z_t = torch.tensor(z, dtype=torch.float)
     obs_t = torch.tensor(obs)
 
-    # temperature signal for the gate: standardize °C with TRAIN-window stats
-    # only (same no-leakage rule as the PM z-scoring), so s=0 is the neutral
-    # airmass the gate is centered on. NaNs (missing sensor/gap) -> 0 -> gate~1.
-    if temp_on:
+    # standardize surface temperature with TRAIN-window stats only (same
+    # no-leakage rule as the PM z-scoring), so s=0 is the neutral airmass. NaNs
+    # (missing sensor/gap) -> 0. This ONE array feeds two consumers:
+    #   * the temperature GATE (node_temp): scales transport strength.
+    #   * the temperature FEATURE: an extra, NEVER-masked node input channel so
+    #     the model can read a node's temperature even when its PM2.5 is hidden.
+    temp_feat_on = USE_TEMP_FEATURE and has_temp
+    if has_temp:
         temp = temp_wide.to_numpy(dtype=np.float64)          # [T, N] °C
         tmu = np.nanmean(temp[train_ts])
         tsd = np.nanstd(temp[train_ts]) + 1e-6
-        temp_z = np.nan_to_num((temp - tmu) / tsd, nan=0.0)
-        temp_z_t = torch.tensor(temp_z, dtype=torch.float)
+        temp_std = torch.tensor(np.nan_to_num((temp - tmu) / tsd, nan=0.0),
+                                dtype=torch.float)           # [T, N]
         print(f"[temp] standardized surface temperature: train mean={tmu:.1f}C "
-              f"std={tsd:.1f}C  ->  gate centered at the mean")
+              f"std={tsd:.1f}C  ->  gate_input=feature")
     else:
-        temp_z_t = None
+        temp_std = None
+    temp_z_t = temp_std if temp_on else None                 # gate input (None -> inert)
+    if USE_TEMP_FEATURE and not has_temp:
+        print("[config] temp_feature=OFF (no temperature data for this city)")
+    else:
+        print(f"[config] temp_feature={'ON' if temp_feat_on else 'OFF'}")
 
-    model = GraPhyNet(node_in=1, edge_in=edge_attr_t.shape[-1], hidden=8, layers=3)
+    # node input width: PM2.5, plus a temperature channel when the feature is on.
+    node_in = 2 if temp_feat_on else 1
+
+    def node_features(t: int):
+        """Node input rows for timestep t: [N, node_in].  col 0 = PM2.5 (z),
+        col 1 = standardized temperature when the feature is on. Returned fresh
+        so masked_step can hide col 0 (PM) while col 1 (temp) stays visible."""
+        pm_col = z_t[t].reshape(-1, 1)
+        if not temp_feat_on:
+            return pm_col.clone()
+        return torch.cat([pm_col, temp_std[t].reshape(-1, 1)], dim=1)
+
+    model = GraPhyNet(node_in=node_in, edge_in=edge_attr_t.shape[-1], hidden=8, layers=3)
     opt = torch.optim.Adam(model.parameters(), lr=LR)
     loss_fn = torch.nn.MSELoss()
 
@@ -294,8 +395,8 @@ def main():
         perm = torch.randperm(len(known))[:n_hide]
         target_nodes = known[perm]
 
-        x = z_t[t].clone().reshape(-1, 1)
-        x[target_nodes, 0] = UNKNOWN  # hide them from the input
+        x = node_features(t)
+        x[target_nodes, 0] = UNKNOWN  # hide only the PM column; temp stays visible
         node_temp = None if temp_z_t is None else temp_z_t[t]
         # this hour's wind (edge_attr) + elevation gate (delev) + temperature gate (node_temp)
         pred = model(x, edge_index, edge_weight, edge_attr_t[t], delev, node_temp)
@@ -340,6 +441,14 @@ def main():
                 f"val_mse(z)={vl:.4f}"
             )
 
+    # learned gate parameters: did the optimizer actually USE the gates, or
+    # leave them at their inert init (elev h_up/h_down ~ init, temp a ~ 0)?
+    with torch.no_grad():
+        temp_a = [round(float(l.temp_gate.a), 3) for l in model.layers]
+        elev_h = [tuple(round(float(v), 1) for v in l.elev_gate.scales()) for l in model.layers]
+    print(f"\n[gates] learned temp a per layer (0=inert): {temp_a}")
+    print(f"[gates] learned elev (h_up,h_down) m per layer: {elev_h}")
+
     # -----------------------------------------------------------------------
     # evaluate: held-out imputation on every val timestep, in real ug/m3
     # -----------------------------------------------------------------------
@@ -352,7 +461,7 @@ def main():
                 continue
             n_hide = max(1, int(len(known) * MASK_FRAC))
             target_nodes = known[torch.randperm(len(known))[:n_hide]]
-            x = z_t[t].clone().reshape(-1, 1)
+            x = node_features(t)
             x[target_nodes, 0] = UNKNOWN
             node_temp = None if temp_z_t is None else temp_z_t[t]
             pred_z = model(x, edge_index, edge_weight, edge_attr_t[t], delev, node_temp)[:, 0]
@@ -397,6 +506,8 @@ def main():
     run_id = datetime.now().strftime("%Y%m%d_%H%M%S")
     elev_tag = "elevON" if USE_ELEVATION else "elevOFF"   # folder says which config
     temp_tag = "tempON" if temp_on else "tempOFF"
+    if temp_feat_on:
+        temp_tag += "_tfeatON"
     # trace the run to its data: which city + which sensor group produced it,
     # e.g. train_20260707_..._slc-urban_elevON_tempOFF (so runs never blur together).
     data_tag = f"{bg.CITY}-{bg.SENSOR_SET}"
@@ -414,6 +525,7 @@ def main():
         "has_temp": bool(has_temp),
         "use_elevation": USE_ELEVATION,
         "use_temperature": bool(temp_on),
+        "use_temp_feature": bool(temp_feat_on),
         "n_nodes": int(N),
         "epochs": EPOCHS,
         "val_frac": VAL_FRAC,
@@ -500,10 +612,18 @@ if __name__ == "__main__":
     import argparse
 
     p = argparse.ArgumentParser(description="train GraPhyNet PM2.5 imputer")
+    p.add_argument("--city", choices=list(bg.CITY_CONFIG), default=bg.CITY,
+                   help=f"which city to train on (default: {bg.CITY}). also swaps "
+                        f"coords/PM2.5/wind/temperature dirs + UTM zone.")
+    p.add_argument("--sensor-set", default=None,
+                   help="which sensor group in that city (e.g. urban/rural). "
+                        "default: the city's first group.")
     p.add_argument("--no-elevation", action="store_true",
                    help="disable the elevation gate (Δelev=0 -> gate=1); for ablation")
     p.add_argument("--no-temperature", action="store_true",
                    help="disable the temperature gate (node_temp=None -> gate=1); for ablation")
+    p.add_argument("--no-temp-feature", action="store_true",
+                   help="disable the temperature node-feature channel (node_in back to 1); for ablation")
     p.add_argument("--rebuild", action="store_true",
                    help="ignore the processed-data cache and preprocess the raw "
                         "CSVs fresh (USE_CACHE=False)")
@@ -515,14 +635,34 @@ if __name__ == "__main__":
                         "per metre of elevation (0=off/real data). Run with "
                         "--synth-elev-grad K both WITH and WITHOUT --no-elevation "
                         "to see if the gate can recover a planted gradient.")
+    p.add_argument("--synth-temp-grad", type=float, default=0.0, metavar="K",
+                   help="sanity test for the TEMPERATURE gate: scale each cell's "
+                        "spatial anomaly by clip(1+K*s) so cold nodes go flat and "
+                        "hot nodes amplify (0=off/real data). Run both WITH and "
+                        "WITHOUT --no-temperature to see if the gate can exploit it.")
+    p.add_argument("--synth-temp-direct", type=float, default=0.0, metavar="K",
+                   help="sanity test for the temp FEATURE: plant PM2.5 = mean + "
+                        "K*20*s directly from each node's own temperature. Run "
+                        "with vs --no-temp-feature to see if the feature exploits it.")
     a = p.parse_args()
+    # point the build_graph2 globals at the requested city/group before main()
+    # reads bg.CITY / bg.SENSOR_SET (mirrors how the smoke tests drove it).
+    bg.use_city(a.city)
+    bg.SENSOR_SET = a.sensor_set or next(iter(bg.GROUP_CONFIG))
+    if bg.SENSOR_SET not in bg.GROUP_CONFIG:
+        p.error(f"--sensor-set {bg.SENSOR_SET!r} not in {a.city} groups "
+                f"{list(bg.GROUP_CONFIG)}")
     if a.rebuild:
         USE_CACHE = False
     if a.no_elevation:
         USE_ELEVATION = False
     if a.no_temperature:
         USE_TEMPERATURE = False
+    if a.no_temp_feature:
+        USE_TEMP_FEATURE = False
     if a.allow_missing_inputs:
         STRICT_INPUTS = False
     SYNTH_ELEV_K = a.synth_elev_grad
+    SYNTH_TEMP_K = a.synth_temp_grad
+    SYNTH_TEMPDIRECT_K = a.synth_temp_direct
     main()
