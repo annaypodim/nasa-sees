@@ -122,6 +122,12 @@ CITY_CONFIG = {
                 purple_air_dir=DATA_DIR / "pittsburgh" / "pm25",
                 wind_zip=DATA_DIR / "pittsburgh" / "uwind_pittsburgh.zip.zip",
                 wind_dir=DATA_DIR / "pittsburgh" / "wind" / "pittsburgh",
+                # surface temperature for the temperature gate. one CSV per
+                # sensor (<id>_temperature.csv, hourly), extracted from the zip.
+                # Pittsburgh is the only city with temperature so far; the others
+                # omit these keys -> load_temperature returns have_temp=False.
+                temp_zip=DATA_DIR / "pittsburgh" / "temperature_csvs.zip",
+                temp_dir=DATA_DIR / "pittsburgh" / "temperature",
             ),
         },
     ),
@@ -321,6 +327,57 @@ def load_wind(wind_zip: Path, wind_dir: Path, station_ids: list[str],
     u10 = pd.DataFrame(u10_cols, index=target_index)[station_ids]
     v10 = pd.DataFrame(v10_cols, index=target_index)[station_ids]
     return u10.fillna(0.0), v10.fillna(0.0), bool(have_wind)
+
+
+# ===========================================================================
+# 4b. TEMPERATURE - hourly per-sensor °C CSVs -> wide [time x station]
+#     surface temperature drives the per-node temperature gate (see
+#     src/model/temperature.py). loaded LIVE like wind (not in the processed
+#     cache); cities without temperature (no temp_dir/temp_zip in their config)
+#     get an all-NaN table + have_temp=False, so the gate stays inert.
+# ===========================================================================
+def load_temperature(temp_zip: Path, temp_dir: Path, station_ids: list[str],
+                     target_index: pd.DatetimeIndex):
+    """Return (temp_wide, have_temp): wide DataFrame [time x station] in °C.
+
+    Each sensor's file is `<id>_temperature.csv` with columns datetime,
+    temperature_C, already HOURLY (the AQ grid), so it only needs reindexing
+    onto `target_index` with a light time-interpolation over any short gaps.
+    Missing sensors -> NaN column; no temperature at all -> have_temp=False.
+    """
+    if temp_dir is None:
+        return pd.DataFrame(index=target_index, columns=station_ids, dtype=float), False
+    if not temp_dir.exists() and temp_zip is not None and temp_zip.exists():
+        print(f"[temp] extracting {temp_zip.name} -> {temp_dir}")
+        with zipfile.ZipFile(temp_zip) as zf:
+            zf.extractall(temp_dir.parent)
+
+    cols = {}
+    have_temp = []
+    for sid in station_ids:
+        csv_path = temp_dir / f"{sid}_temperature.csv"
+        if not csv_path.exists():
+            cols[sid] = pd.Series(dtype=float)
+            continue
+        df = pd.read_csv(csv_path, parse_dates=["datetime"])
+        df = df.set_index(pd.DatetimeIndex(df["datetime"]).tz_localize("UTC")).sort_index()
+        have_temp.append(sid)
+        # union index so a time-interpolation has native points, then reindex
+        # down to just the hourly AQ timestamps we actually need.
+        full_index = df.index.union(target_index)
+        interp = df.reindex(full_index)["temperature_C"].interpolate(method="time")
+        cols[sid] = interp.reindex(target_index)
+
+    if not have_temp:
+        print(f"[temp] no temperature files under {temp_dir} -> temperature gate "
+              f"will be inert")
+    elif len(have_temp) < len(station_ids):
+        missing = sorted(set(station_ids) - set(have_temp))
+        print(f"[temp] {len(missing)}/{len(station_ids)} sensors missing "
+              f"temperature -> NaN (filled from the field mean): {missing}")
+
+    temp_wide = pd.DataFrame(cols, index=target_index)[station_ids]
+    return temp_wide, bool(have_temp)
 
 
 # ===========================================================================

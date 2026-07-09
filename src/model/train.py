@@ -53,6 +53,8 @@ LR = 0.01
 UNKNOWN = 0.0  # placeholder fed for hidden/missing nodes (in z-space)
 EXCEED_UG = 35.4  # PM2.5 exceedance threshold for the ROC-AUC label (EPA USG)
 USE_ELEVATION = True  # elevation gate on/off (CLI: --no-elevation zeroes Δelev -> gate=1)
+USE_TEMPERATURE = True  # temperature gate on/off (CLI: --no-temperature -> node_temp=None,
+#                         an exact no-op). Silently inert if the city has no temperature.
 USE_CACHE = True  # load data/<city>/processed/<group> if present (CLI: --rebuild)
 STRICT_INPUTS = True  # abort if PM2.5 / distance / wind inputs are missing or all-zero
 #                       (CLI: --allow-missing-inputs runs anyway with zero-filled features)
@@ -106,6 +108,11 @@ def build_static_graph():
     u10_wide, v10_wide, has_wind = bg.load_wind(
         cfg["wind_zip"], cfg["wind_dir"], kept_ids, pm.index
     )
+    # surface temperature on the same timeline for the temperature gate (live-
+    # loaded like wind, not cached). cfg may omit temp_* -> have_temp=False.
+    temp_wide, has_temp = bg.load_temperature(
+        cfg.get("temp_zip"), cfg.get("temp_dir"), kept_ids, pm.index
+    )
 
     # restrict everything to the surviving nodes; node order = sorted kept ids
     coords = coords[coords["station_id"].isin(kept_ids)].sort_values("station_id")
@@ -114,6 +121,7 @@ def build_static_graph():
     observed = observed.reindex(columns=ids)
     u10_wide = u10_wide.reindex(columns=ids)
     v10_wide = v10_wide.reindex(columns=ids)
+    temp_wide = temp_wide.reindex(columns=ids)
 
     x_m, y_m = bg.project(coords["lat"].to_numpy(), coords["lon"].to_numpy())
     edge_index = bg.knn_edges(x_m, y_m, bg.K)
@@ -146,11 +154,13 @@ def build_static_graph():
 
     print(
         f"[graph] set={bg.SENSOR_SET!r}  nodes={len(ids)}  "
-        f"edges={edge_index.shape[1]}  timesteps={len(pm)}  has_wind={has_wind}"
+        f"edges={edge_index.shape[1]}  timesteps={len(pm)}  "
+        f"has_wind={has_wind}  has_temp={has_temp}"
     )
 
     validate_inputs(pm, observed, edge_dist, edge_attr_t, has_wind)
-    return ids, pm, observed, edge_index, edge_weight, edge_attr_t, edge_delev, elev, has_wind
+    return (ids, pm, observed, edge_index, edge_weight, edge_attr_t, edge_delev,
+            elev, has_wind, temp_wide, has_temp)
 
 
 # ---------------------------------------------------------------------------
@@ -206,13 +216,22 @@ def main():
     torch.manual_seed(SEED)
     rng = np.random.default_rng(SEED)
 
-    ids, pm, observed, edge_index, edge_weight, edge_attr_t, edge_delev, elev, has_wind = build_static_graph()
+    (ids, pm, observed, edge_index, edge_weight, edge_attr_t, edge_delev, elev,
+     has_wind, temp_wide, has_temp) = build_static_graph()
     N = len(ids)
 
     # elevation-gate toggle: zeroing Δelev makes gate=exp(0)=1 everywhere (exact
     # no-op), so --no-elevation is a clean ablation against the identical model.
     delev = edge_delev if USE_ELEVATION else torch.zeros_like(edge_delev)
     print(f"[config] elevation_gate={'ON' if USE_ELEVATION else 'OFF'}")
+
+    # temperature-gate toggle: active only when requested AND the city has temp.
+    # OFF -> node_temp=None each step -> the gate is skipped entirely (no-op).
+    temp_on = USE_TEMPERATURE and has_temp
+    if USE_TEMPERATURE and not has_temp:
+        print("[config] temperature_gate=OFF (no temperature data for this city)")
+    else:
+        print(f"[config] temperature_gate={'ON' if temp_on else 'OFF'}")
 
     # normalise in log1p space using ONLY observed training cells (no leakage).
     T = len(pm)
@@ -248,6 +267,20 @@ def main():
     z_t = torch.tensor(z, dtype=torch.float)
     obs_t = torch.tensor(obs)
 
+    # temperature signal for the gate: standardize °C with TRAIN-window stats
+    # only (same no-leakage rule as the PM z-scoring), so s=0 is the neutral
+    # airmass the gate is centered on. NaNs (missing sensor/gap) -> 0 -> gate~1.
+    if temp_on:
+        temp = temp_wide.to_numpy(dtype=np.float64)          # [T, N] °C
+        tmu = np.nanmean(temp[train_ts])
+        tsd = np.nanstd(temp[train_ts]) + 1e-6
+        temp_z = np.nan_to_num((temp - tmu) / tsd, nan=0.0)
+        temp_z_t = torch.tensor(temp_z, dtype=torch.float)
+        print(f"[temp] standardized surface temperature: train mean={tmu:.1f}C "
+              f"std={tsd:.1f}C  ->  gate centered at the mean")
+    else:
+        temp_z_t = None
+
     model = GraPhyNet(node_in=1, edge_in=edge_attr_t.shape[-1], hidden=8, layers=3)
     opt = torch.optim.Adam(model.parameters(), lr=LR)
     loss_fn = torch.nn.MSELoss()
@@ -263,7 +296,9 @@ def main():
 
         x = z_t[t].clone().reshape(-1, 1)
         x[target_nodes, 0] = UNKNOWN  # hide them from the input
-        pred = model(x, edge_index, edge_weight, edge_attr_t[t], delev)  # this hour's wind + elevation gate
+        node_temp = None if temp_z_t is None else temp_z_t[t]
+        # this hour's wind (edge_attr) + elevation gate (delev) + temperature gate (node_temp)
+        pred = model(x, edge_index, edge_weight, edge_attr_t[t], delev, node_temp)
         return loss_fn(pred[target_nodes, 0], z_t[t][target_nodes])
 
     print(
@@ -319,7 +354,8 @@ def main():
             target_nodes = known[torch.randperm(len(known))[:n_hide]]
             x = z_t[t].clone().reshape(-1, 1)
             x[target_nodes, 0] = UNKNOWN
-            pred_z = model(x, edge_index, edge_weight, edge_attr_t[t], delev)[:, 0]
+            node_temp = None if temp_z_t is None else temp_z_t[t]
+            pred_z = model(x, edge_index, edge_weight, edge_attr_t[t], delev, node_temp)[:, 0]
             for node in target_nodes.tolist():
                 true_ug = np.expm1(z[t, node] * sigma + mu)
                 pred_ug = np.expm1(pred_z[node].item() * sigma + mu)
@@ -360,11 +396,12 @@ def main():
 
     run_id = datetime.now().strftime("%Y%m%d_%H%M%S")
     elev_tag = "elevON" if USE_ELEVATION else "elevOFF"   # folder says which config
+    temp_tag = "tempON" if temp_on else "tempOFF"
     # trace the run to its data: which city + which sensor group produced it,
-    # e.g. train_20260707_..._slc-urban_elevON  (so runs never blur together).
+    # e.g. train_20260707_..._slc-urban_elevON_tempOFF (so runs never blur together).
     data_tag = f"{bg.CITY}-{bg.SENSOR_SET}"
     run_dir = (Path(__file__).resolve().parents[2] / "outputs" / "runs" /
-               f"train_{run_id}_{data_tag}_{elev_tag}")
+               f"train_{run_id}_{data_tag}_{elev_tag}_{temp_tag}")
     run_dir.mkdir(parents=True, exist_ok=True)
 
     # the numbers we actually read: a small metrics.json summarising the run,
@@ -374,7 +411,9 @@ def main():
         "city": bg.CITY,
         "sensor_set": bg.SENSOR_SET,
         "has_wind": bool(has_wind),
+        "has_temp": bool(has_temp),
         "use_elevation": USE_ELEVATION,
+        "use_temperature": bool(temp_on),
         "n_nodes": int(N),
         "epochs": EPOCHS,
         "val_frac": VAL_FRAC,
@@ -463,6 +502,8 @@ if __name__ == "__main__":
     p = argparse.ArgumentParser(description="train GraPhyNet PM2.5 imputer")
     p.add_argument("--no-elevation", action="store_true",
                    help="disable the elevation gate (Δelev=0 -> gate=1); for ablation")
+    p.add_argument("--no-temperature", action="store_true",
+                   help="disable the temperature gate (node_temp=None -> gate=1); for ablation")
     p.add_argument("--rebuild", action="store_true",
                    help="ignore the processed-data cache and preprocess the raw "
                         "CSVs fresh (USE_CACHE=False)")
@@ -479,6 +520,8 @@ if __name__ == "__main__":
         USE_CACHE = False
     if a.no_elevation:
         USE_ELEVATION = False
+    if a.no_temperature:
+        USE_TEMPERATURE = False
     if a.allow_missing_inputs:
         STRICT_INPUTS = False
     SYNTH_ELEV_K = a.synth_elev_grad
