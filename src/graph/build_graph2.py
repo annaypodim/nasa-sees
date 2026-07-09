@@ -128,6 +128,12 @@ CITY_CONFIG = {
                 # omit these keys -> load_temperature returns have_temp=False.
                 temp_zip=DATA_DIR / "pittsburgh" / "temperature_csvs.zip",
                 temp_dir=DATA_DIR / "pittsburgh" / "temperature",
+                # MAIAC (MCD19A2) 1 km AOD sampled at each sensor by
+                # scripts/fetch_aod.py -> one city CSV, sub-daily + gappy. Unlike
+                # ERA5 temp/wind, AOD varies in space (1 km over a ~13 km net), so
+                # it's a real spatial covariate for the never-masked AOD feature.
+                aod_csv=DATA_DIR / "pittsburgh" / "aod"
+                / "aod_points_2023-01-01_2023-12-31.csv",
             ),
         },
     ),
@@ -378,6 +384,54 @@ def load_temperature(temp_zip: Path, temp_dir: Path, station_ids: list[str],
 
     temp_wide = pd.DataFrame(cols, index=target_index)[station_ids]
     return temp_wide, bool(have_temp)
+
+
+# ===========================================================================
+# 4c. AOD - MODIS/MAIAC MCD19A2 1 km column aerosol sampled at sensor points.
+#     ONE city CSV (scripts/fetch_aod.py), sub-daily + gappy: ~1-3 satellite
+#     overpasses/day, dropping out under cloud. Feeds the never-masked AOD node
+#     feature (train.py). Unlike ERA5 temp/wind this genuinely varies in space,
+#     so it can discriminate an unmonitored location. Cities without an aod_csv
+#     get an all-NaN table + have_aod=False (feature stays neutral).
+# ===========================================================================
+def load_aod(aod_csv: Path, station_ids: list[str],
+             target_index: pd.DatetimeIndex):
+    """Return (aod_wide, has_aod): wide DataFrame [time x station] of AOD@550nm.
+
+    Collapse the multiple daily orbits to a per-day mean per sensor, then
+    broadcast each day's value onto the hourly `target_index` (AOD is a daily
+    covariate, not hourly). Days with no cloud-free retrieval stay NaN -> the
+    model fills them from the field mean, so the feature is simply neutral there.
+    """
+    empty = pd.DataFrame(index=target_index, columns=station_ids, dtype=float)
+    if aod_csv is None or not Path(aod_csv).exists():
+        print(f"[aod] no AOD file ({aod_csv}) -> AOD feature will be inert")
+        return empty, False
+
+    df = pd.read_csv(aod_csv, parse_dates=["datetime"])
+    if df.empty or "aod_055" not in df.columns:
+        print(f"[aod] {Path(aod_csv).name} empty/malformed -> AOD feature inert")
+        return empty, False
+
+    df["id"] = df["id"].astype(str)
+    df = df[df["id"].isin(station_ids)]
+    ts = pd.DatetimeIndex(df["datetime"])
+    ts = ts.tz_localize("UTC") if ts.tz is None else ts.tz_convert("UTC")
+    df = df.assign(day=ts.floor("D"))
+
+    # sub-daily orbits -> one value per (day, sensor); NaN days left absent.
+    daily = df.groupby(["day", "id"])["aod_055"].mean().unstack("id")
+    # broadcast day -> every hour of that day on the AQ timeline.
+    aod_wide = daily.reindex(target_index.floor("D"))
+    aod_wide.index = target_index
+    aod_wide = aod_wide.reindex(columns=station_ids)
+
+    n_have = int(daily.notna().any(axis=0).sum())
+    cover = float(daily.notna().to_numpy().mean()) if daily.size else 0.0
+    print(f"[aod] {Path(aod_csv).name}: {daily.shape[0]} days, "
+          f"{n_have}/{len(station_ids)} sensors with data, "
+          f"{cover * 100:.0f}% of day-cells have a retrieval")
+    return aod_wide, n_have > 0
 
 
 # ===========================================================================

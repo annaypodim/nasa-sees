@@ -48,6 +48,13 @@ SEED = 0
 EPOCHS = 80  # training length
 VAL_FRAC = 0.15  # train/test split: last fraction of timeline held out for eval
 MASK_FRAC = 0.20  # fraction of a timestep's KNOWN nodes to hide + predict
+SPATIAL_HOLDOUT = False  # eval regime. False: leave-one-node-out (dense; neighbours
+#   dominate, covariates redundant). True: hide a target AND its HOLDOUT_RING nearest
+#   sensors, then predict the target -- it has no nearby known sensor, so the model
+#   must lean on farther nodes + covariates (temperature). This is the "no monitor
+#   here" interpolation regime where met covariates can actually add signal.
+#   (CLI: --spatial-holdout, --holdout-ring N)
+HOLDOUT_RING = 4  # how many nearest sensors to blank around the target, spatial mode
 STEPS_PER_EPOCH = 64  # random timesteps sampled per epoch
 LR = 0.01
 UNKNOWN = 0.0  # placeholder fed for hidden/missing nodes (in z-space)
@@ -59,6 +66,10 @@ USE_TEMP_FEATURE = True  # temperature as a NEVER-masked node input channel (CLI
 #                          --no-temp-feature). The target's own temperature stays
 #                          visible when its PM2.5 is hidden, so the model can predict
 #                          from it directly -- the lever the gate structurally lacks.
+USE_ELEV_FEATURE = True  # DEM elevation as a NEVER-masked node channel (CLI:
+#                          --no-elev-feature). Elevation is spatially varying AND
+#                          knowable at any location from a DEM, so it's the covariate
+#                          that actually pays off for interpolation in complex terrain.
 USE_CACHE = True  # load data/<city>/processed/<group> if present (CLI: --rebuild)
 STRICT_INPUTS = True  # abort if PM2.5 / distance / wind inputs are missing or all-zero
 #                       (CLI: --allow-missing-inputs runs anyway with zero-filled features)
@@ -370,34 +381,70 @@ def main():
     else:
         print(f"[config] temp_feature={'ON' if temp_feat_on else 'OFF'}")
 
-    # node input width: PM2.5, plus a temperature channel when the feature is on.
-    node_in = 2 if temp_feat_on else 1
+    # ELEVATION FEATURE: a never-masked node channel from the static DEM elevation.
+    # Unlike ERA5 temperature, elevation genuinely varies in space AND is knowable
+    # at any (even sensor-free) location from a DEM -- the standard covariate in
+    # land-use-regression / kriging-with-external-drift. Standardized across nodes;
+    # static in time, so it's the same column every timestep.
+    elev_feat_on = USE_ELEV_FEATURE
+    if elev_feat_on:
+        e = np.asarray(elev, dtype=np.float64)
+        elev_std = torch.tensor((e - e.mean()) / (e.std() + 1e-6),
+                                dtype=torch.float).reshape(-1, 1)   # [N, 1]
+        print(f"[elev] standardized DEM elevation feature: spread "
+              f"{e.max() - e.min():.0f} m across {N} nodes")
+    print(f"[config] elev_feature={'ON' if elev_feat_on else 'OFF'}")
+
+    # never-masked feature channels appended after PM2.5 (col 0). masked_step hides
+    # only col 0, so temperature/elevation stay visible at the hidden node -- exactly
+    # what's available when interpolating to a location with no PM sensor.
+    node_in = 1 + int(temp_feat_on) + int(elev_feat_on)
 
     def node_features(t: int):
-        """Node input rows for timestep t: [N, node_in].  col 0 = PM2.5 (z),
-        col 1 = standardized temperature when the feature is on. Returned fresh
-        so masked_step can hide col 0 (PM) while col 1 (temp) stays visible."""
-        pm_col = z_t[t].reshape(-1, 1)
-        if not temp_feat_on:
-            return pm_col.clone()
-        return torch.cat([pm_col, temp_std[t].reshape(-1, 1)], dim=1)
+        """Node input rows for timestep t: [N, node_in]. col 0 = PM2.5 (z, maskable);
+        then temperature and/or elevation channels (never masked)."""
+        cols = [z_t[t].reshape(-1, 1)]
+        if temp_feat_on:
+            cols.append(temp_std[t].reshape(-1, 1))
+        if elev_feat_on:
+            cols.append(elev_std)
+        return torch.cat(cols, dim=1) if len(cols) > 1 else cols[0].clone()
 
     model = GraPhyNet(node_in=node_in, edge_in=edge_attr_t.shape[-1], hidden=8, layers=3)
     opt = torch.optim.Adam(model.parameters(), lr=LR)
     loss_fn = torch.nn.MSELoss()
 
+    # SPATIAL HOLDOUT: for each node, the indices of ITSELF + its HOLDOUT_RING
+    # nearest sensors (by UTM distance). Hiding this whole disk leaves the target
+    # with no nearby known sensor -> the "no monitor here" interpolation regime.
+    node_dist = np.hypot(x_m[:, None] - x_m[None, :], y_m[:, None] - y_m[None, :])
+    hide_idx = torch.tensor(np.argsort(node_dist, axis=1)[:, :HOLDOUT_RING + 1],
+                            dtype=torch.long)                # [N, ring+1], col0=self
+    print(f"[config] eval={'SPATIAL_HOLDOUT ring=' + str(HOLDOUT_RING) if SPATIAL_HOLDOUT else 'leave-one-node-out'}")
+
     def masked_step(t: int, train: bool):
-        """Hide a random subset of known nodes at timestep t; predict them."""
+        """One masked-imputation step at timestep t; returns MSE over the targets.
+
+        leave-one-node-out: hide a random subset of known nodes, score them.
+        spatial holdout: pick one known target, hide it + its nearest ring, score
+        just the target (it now has no nearby known sensor)."""
         known = torch.nonzero(obs_t[t], as_tuple=False).squeeze(-1)
+        node_temp = None if temp_z_t is None else temp_z_t[t]
+        if SPATIAL_HOLDOUT:
+            if len(known) < HOLDOUT_RING + 2:
+                return None
+            target = int(known[torch.randint(len(known), (1,))])
+            x = node_features(t)
+            x[hide_idx[target], 0] = UNKNOWN          # blank the target + its ring
+            pred = model(x, edge_index, edge_weight, edge_attr_t[t], delev, node_temp)
+            return loss_fn(pred[target, 0], z_t[t][target])
+
         if len(known) < 3:
             return None
         n_hide = max(1, int(len(known) * MASK_FRAC))
-        perm = torch.randperm(len(known))[:n_hide]
-        target_nodes = known[perm]
-
+        target_nodes = known[torch.randperm(len(known))[:n_hide]]
         x = node_features(t)
         x[target_nodes, 0] = UNKNOWN  # hide only the PM column; temp stays visible
-        node_temp = None if temp_z_t is None else temp_z_t[t]
         # this hour's wind (edge_attr) + elevation gate (delev) + temperature gate (node_temp)
         pred = model(x, edge_index, edge_weight, edge_attr_t[t], delev, node_temp)
         return loss_fn(pred[target_nodes, 0], z_t[t][target_nodes])
@@ -457,13 +504,31 @@ def main():
     with torch.no_grad():
         for t in val_ts:
             known = torch.nonzero(obs_t[t], as_tuple=False).squeeze(-1)
+            node_temp = None if temp_z_t is None else temp_z_t[t]
+
+            if SPATIAL_HOLDOUT:
+                # up to 5 random targets/timestep, each with its own hidden disk,
+                # scored alone -- the "no nearby monitor" interpolation regime.
+                if len(known) < HOLDOUT_RING + 2:
+                    continue
+                sel = known[torch.randperm(len(known))[:5]].tolist()
+                for target in sel:
+                    x = node_features(t)
+                    x[hide_idx[target], 0] = UNKNOWN
+                    pred_z = model(x, edge_index, edge_weight, edge_attr_t[t], delev, node_temp)[:, 0]
+                    rows.append({
+                        "timestamp": pm.index[t], "station_id": ids[target],
+                        "pm25_true": np.expm1(z[t, target] * sigma + mu),
+                        "pm25_pred": np.expm1(pred_z[target].item() * sigma + mu),
+                    })
+                continue
+
             if len(known) < 3:
                 continue
             n_hide = max(1, int(len(known) * MASK_FRAC))
             target_nodes = known[torch.randperm(len(known))[:n_hide]]
             x = node_features(t)
             x[target_nodes, 0] = UNKNOWN
-            node_temp = None if temp_z_t is None else temp_z_t[t]
             pred_z = model(x, edge_index, edge_weight, edge_attr_t[t], delev, node_temp)[:, 0]
             for node in target_nodes.tolist():
                 true_ug = np.expm1(z[t, node] * sigma + mu)
@@ -508,6 +573,8 @@ def main():
     temp_tag = "tempON" if temp_on else "tempOFF"
     if temp_feat_on:
         temp_tag += "_tfeatON"
+    if elev_feat_on:
+        temp_tag += "_efeatON"
     # trace the run to its data: which city + which sensor group produced it,
     # e.g. train_20260707_..._slc-urban_elevON_tempOFF (so runs never blur together).
     data_tag = f"{bg.CITY}-{bg.SENSOR_SET}"
@@ -526,6 +593,7 @@ def main():
         "use_elevation": USE_ELEVATION,
         "use_temperature": bool(temp_on),
         "use_temp_feature": bool(temp_feat_on),
+        "use_elev_feature": bool(elev_feat_on),
         "n_nodes": int(N),
         "epochs": EPOCHS,
         "val_frac": VAL_FRAC,
@@ -624,6 +692,13 @@ if __name__ == "__main__":
                    help="disable the temperature gate (node_temp=None -> gate=1); for ablation")
     p.add_argument("--no-temp-feature", action="store_true",
                    help="disable the temperature node-feature channel (node_in back to 1); for ablation")
+    p.add_argument("--no-elev-feature", action="store_true",
+                   help="disable the DEM elevation node-feature channel; for ablation")
+    p.add_argument("--spatial-holdout", action="store_true",
+                   help="eval by hiding a target + its nearest neighbours (no nearby "
+                        "known sensor), the interpolation regime where covariates matter")
+    p.add_argument("--holdout-ring", type=int, default=None, metavar="N",
+                   help="how many nearest sensors to blank around the target (spatial mode)")
     p.add_argument("--rebuild", action="store_true",
                    help="ignore the processed-data cache and preprocess the raw "
                         "CSVs fresh (USE_CACHE=False)")
@@ -660,6 +735,12 @@ if __name__ == "__main__":
         USE_TEMPERATURE = False
     if a.no_temp_feature:
         USE_TEMP_FEATURE = False
+    if a.no_elev_feature:
+        USE_ELEV_FEATURE = False
+    if a.spatial_holdout:
+        SPATIAL_HOLDOUT = True
+    if a.holdout_ring is not None:
+        HOLDOUT_RING = a.holdout_ring
     if a.allow_missing_inputs:
         STRICT_INPUTS = False
     SYNTH_ELEV_K = a.synth_elev_grad
