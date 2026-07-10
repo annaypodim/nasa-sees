@@ -70,6 +70,12 @@ USE_ELEV_FEATURE = True  # DEM elevation as a NEVER-masked node channel (CLI:
 #                          --no-elev-feature). Elevation is spatially varying AND
 #                          knowable at any location from a DEM, so it's the covariate
 #                          that actually pays off for interpolation in complex terrain.
+WIND_SOURCE = "era5"  # which wind feeds the convection module (CLI: --wind).
+#   "era5": the original ~30 km reanalysis -> one vector city-wide (spatially flat).
+#   "hrrr": HRRR 3 km -> real spatial structure; its convergence zones carry PM
+#           signal (spatial-anomaly corr -0.119) the single ERA5 vector can't show.
+#   "zero": all-zero wind -> convection inert (distance only); the convection-OFF
+#           floor for the ablation. Needs --allow-missing-inputs (all-zero wind).
 USE_CACHE = True  # load data/<city>/processed/<group> if present (CLI: --rebuild)
 STRICT_INPUTS = True  # abort if PM2.5 / distance / wind inputs are missing or all-zero
 #                       (CLI: --allow-missing-inputs runs anyway with zero-filled features)
@@ -139,10 +145,23 @@ def build_static_graph():
         # drop full-year duds + get the per-cell observed mask
         pm, observed, kept_ids, _ = pp.preprocess(pm_raw)
 
-    # wind is interpolated onto the (now-known) PM2.5 timeline per surviving sensor
-    u10_wide, v10_wide, has_wind = bg.load_wind(
-        cfg["wind_zip"], cfg["wind_dir"], kept_ids, pm.index
-    )
+    # wind is interpolated onto the (now-known) PM2.5 timeline per surviving sensor.
+    # WIND_SOURCE picks the field: ERA5 (~30 km, flat), HRRR (3 km, spatially
+    # structured), or zero (convection-off ablation floor).
+    if WIND_SOURCE == "zero":
+        u10_wide = pd.DataFrame(0.0, index=pm.index, columns=kept_ids)
+        v10_wide = pd.DataFrame(0.0, index=pm.index, columns=kept_ids)
+        has_wind = False
+        print("[wind] source=zero -> convection inert (distance only)")
+    elif WIND_SOURCE == "hrrr":
+        hrrr_dir = cfg.get("wind_hrrr_dir")
+        u10_wide, v10_wide, has_wind = bg.load_wind(None, hrrr_dir, kept_ids, pm.index)
+        print(f"[wind] source=HRRR 3km ({hrrr_dir})")
+    else:
+        u10_wide, v10_wide, has_wind = bg.load_wind(
+            cfg["wind_zip"], cfg["wind_dir"], kept_ids, pm.index
+        )
+        print("[wind] source=ERA5 ~30km")
     # surface temperature on the same timeline for the temperature gate (live-
     # loaded like wind, not cached). cfg may omit temp_* -> have_temp=False.
     temp_wide, has_temp = bg.load_temperature(
@@ -686,6 +705,10 @@ if __name__ == "__main__":
     p.add_argument("--sensor-set", default=None,
                    help="which sensor group in that city (e.g. urban/rural). "
                         "default: the city's first group.")
+    p.add_argument("--wind", choices=["era5", "hrrr", "zero"], default=None,
+                   help="wind field feeding convection: era5 (~30km, flat), "
+                        "hrrr (3km, spatially structured), zero (convection off). "
+                        "Use with --allow-missing-inputs for zero.")
     p.add_argument("--no-elevation", action="store_true",
                    help="disable the elevation gate (Δelev=0 -> gate=1); for ablation")
     p.add_argument("--no-temperature", action="store_true",
@@ -727,6 +750,8 @@ if __name__ == "__main__":
     if bg.SENSOR_SET not in bg.GROUP_CONFIG:
         p.error(f"--sensor-set {bg.SENSOR_SET!r} not in {a.city} groups "
                 f"{list(bg.GROUP_CONFIG)}")
+    if a.wind is not None:
+        WIND_SOURCE = a.wind
     if a.rebuild:
         USE_CACHE = False
     if a.no_elevation:

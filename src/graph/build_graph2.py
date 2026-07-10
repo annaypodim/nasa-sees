@@ -122,6 +122,13 @@ CITY_CONFIG = {
                 purple_air_dir=DATA_DIR / "pittsburgh" / "pm25",
                 wind_zip=DATA_DIR / "pittsburgh" / "uwind_pittsburgh.zip.zip",
                 wind_dir=DATA_DIR / "pittsburgh" / "wind" / "pittsburgh",
+                # HRRR 3 km 10 m wind sampled at each sensor (scripts/
+                # fetch_wind_hrrr.py), same sensor_<id>.csv schema as ERA5. Unlike
+                # ERA5 (~30 km = one vector city-wide), HRRR resolves terrain-
+                # channeled flow, so its spatial DIVERGENCE carries real PM signal
+                # (corr -0.119) -- the input the convection module actually needs.
+                # Select at train time with WIND_SOURCE="hrrr" / --wind hrrr.
+                wind_hrrr_dir=DATA_DIR / "pittsburgh" / "wind_hrrr",
                 # surface temperature for the temperature gate. one CSV per
                 # sensor (<id>_temperature.csv, hourly), extracted from the zip.
                 # Pittsburgh is the only city with temperature so far; the others
@@ -146,6 +153,23 @@ CITY_CONFIG = {
                 # no wind data yet: these paths don't exist, load_wind zero-fills.
                 wind_zip=DATA_DIR / "slc" / "wind" / "none.zip",
                 wind_dir=DATA_DIR / "slc" / "wind" / "urban",
+            ),
+        },
+    ),
+    # Fresno, CA -- GraPhy's own benchmark city (41 sensors, Oct 2023-Jan 2024).
+    # We reproduce their setup here to check our base interpolator matches their
+    # reported MAE 2.38 ug/m3 under the same inductive protocol. Wind is HRRR
+    # (Open-Meteo) sampled per sensor; ERA5 path is left unset (load_wind falls
+    # back to zero-fill if the hrrr dir is chosen via WIND_SOURCE).
+    "fresno": dict(
+        coords_file=DATA_DIR / "fresno" / "coords" / "sensor_lat_long_alt",
+        utm_crs="EPSG:32611",          # UTM zone 11N (Central California)
+        groups={
+            "urban": dict(
+                purple_air_dir=DATA_DIR / "fresno" / "pm25" / "urban",
+                wind_zip=DATA_DIR / "fresno" / "wind" / "none.zip",
+                wind_dir=DATA_DIR / "fresno" / "wind" / "urban",
+                wind_hrrr_dir=DATA_DIR / "fresno" / "wind_hrrr",
             ),
         },
     ),

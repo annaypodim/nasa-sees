@@ -263,6 +263,10 @@ def main() -> None:
     ap.add_argument("--min-spacing-km", type=float, default=MIN_SPACING_KM,
                     help="drop sensors within this many km of a kept one "
                          "(0 = keep all). Thins the dense valley floor.")
+    ap.add_argument("--bbox", default=None, metavar="NWLAT,NWLNG,SELAT,SELNG",
+                    help="override the hard-coded box, e.g. Fresno "
+                         "'36.90,-119.95,36.62,-119.60'. NW=(max lat,min lon), "
+                         "SE=(min lat,max lon).")
     ap.add_argument("--list-only", action="store_true",
                     help="write the coords file only; skip history downloads")
     a = ap.parse_args()
@@ -270,6 +274,16 @@ def main() -> None:
 
     if not a.api_key:
         sys.exit("No API key. Set PURPLEAIR_API_KEY or pass --api-key.")
+
+    # optional box override (default is the module-level SLC BBOX). fetch_sensor_list
+    # reads the global BBOX, so rebind it here.
+    if a.bbox:
+        try:
+            nwlat, nwlng, selat, selng = (float(v) for v in a.bbox.split(","))
+        except ValueError:
+            sys.exit(f"--bbox must be 4 comma-separated floats, got {a.bbox!r}")
+        global BBOX
+        BBOX = dict(nwlat=nwlat, nwlng=nwlng, selat=selat, selng=selng)
 
     out_dir = Path(a.out)
     start_dt = datetime.strptime(a.start, "%Y-%m-%d").replace(tzinfo=timezone.utc)
