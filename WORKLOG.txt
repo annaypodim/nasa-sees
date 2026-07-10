@@ -253,3 +253,98 @@ their exact QA. Model levers are exhausted (capacity, K, learn-bw all flat).
 NEXT (user's call): (a) accept as a faithful capability reproduction (GNN beats IDW/
 kriging, GraPhy's core claim), or (b) now that the base is sound, pursue the NOVELTY
 direction (long-gap filling + terrain), which is where "strong AND novel" lives.
+
+================================================================================
+[2026-07-10  GATE ABLATION on the validated strong base]  WHERE: scripts/eval_inductive.py
+  (--elev-gate, --elev-feature). Question: now that the base beats IDW, do our GATES
+  / novel additions improve SPATIAL INTERPOLATION? Protocol: inductive, 8 seeds, strong
+  base config (idw-prior + idw-feature + no-convection + corr-reg 0.6 + epa-correct,
+  sqrt/huber/clip1, 4x16). SLC = terrain (22 nodes, 418.5m spread, all 142 edges nonzero
+  delev) = the gate's design target; Fresno = FLAT control.
+
+  ELEVATION GATE (edge modulator, per signed delev):
+    SLC:    base 4.824 -> gate 4.692  (-2.7% MAE, R2 .624->.639); vs IDW floor 5.103
+            the win over IDW widens +5.5% -> +8.1%. PAIRED per-seed: gate WINS 7/8
+            (only seed7 +0.156), mean delta -0.133 ug/m3 -> real, not seed luck.
+    Fresno: base 4.371 -> gate 4.377  (+0.1%, INERT) -- exactly right: delev~0 on flat
+            ground so the gate self-disables. No hand-tuning needed.
+
+  ELEVATION FEATURE (extra never-masked node channel) -- HURTS EVERYWHERE, drop it:
+    SLC 4.824 -> 4.900 (+1.6%);  Fresno 4.371 -> 4.581 (+4.8%, pure overfit noise on flat).
+    gate+feature (SLC 4.781) < gate alone: the free channel drags the gain back down.
+
+  TAKEAWAY: the GATE form (constrained, physics-shaped, Delta-elev driven) is the right
+  design -- helps on terrain, inert on flat, robust across seeds. The FEATURE form
+  (unconstrained channel) is wrong -> remove --elev-feature from any terrain config.
+  RECOMMENDED terrain config = strong base + --elev-gate (NOT --elev-feature).
+
+  NOT TESTABLE YET (no data): temp gate + AOD. has_temp=False on BOTH cities; no AOD on
+  disk. Temp gate also still passes node_temp=None in eval_inductive (needs wire-in).
+  SLC winter inversions are the ideal temp-gate test bed -> next step = fetch SLC surface
+  temp, wire node_temp into the inductive harness, ablate the per-node temp gate there.
+
+================================================================================
+[2026-07-10  TEMPERATURE GATE test on Pittsburgh]  WHERE: scripts/eval_inductive.py
+  wired the per-node temp gate into the inductive harness (new --temp-gate flag:
+  build standardized [T,N] surface-temp tensor from graph's temp_wide, pass as
+  node_temp into both model() calls; was hard-coded None before). Pittsburgh chosen
+  over SLC because it's the ONLY city with temperature already, and it's PER-SENSOR
+  (each PurpleAir <id>_temperature.csv) -> nominally spatial, no fetch needed.
+  Strong base config, 8 seeds, 59 nodes, full year.
+
+  RESULT (MAE ug/m3, 8 seeds):   IDW floor 5.203
+    base                 5.077 +-0.456   (barely beats IDW; dense 59-node net is hard)
+    + temp-gate          5.100 +-0.383   +0.5% WORSE.  paired: temp wins 4/8, mean +0.023
+    + elev-gate          5.111 +-0.429   +0.7% worse (elev gate helps on SLC, NOT here)
+    + temp + elev        5.102
+  => TEMP GATE IS A WASH (coin-flip, slightly negative). No spatial signal.
+
+  ROOT CAUSE (measured): Pittsburgh's "per-sensor" temp is effectively COMMON-MODE.
+    TEMPORAL std (field mean over year) = 8.84 C
+    SPATIAL std (across 59 sensors, per hour) = 0.06 C  (median 0.05)
+    spatial/temporal ratio = 0.007  -> at any hour ALL sensors read ~the same temp.
+  So it's a regional field sampled at points, not independent sensor physics -- the
+  SAME common-mode dead-end as ERA5 (see memory aod-fusion-direction). A per-node gate
+  whose input doesn't vary in space cannot discriminate held-out locations; for
+  INDUCTIVE SPATIAL interp a spatially-uniform gate is a no-op on the relative
+  interpolation. Global standardization also buries the tiny spatial part under the
+  seasonal swing, but even a per-hour spatial-anomaly reframing has only 0.06 C to
+  work with -> not worth it. Temp gate mechanically fine, but no signal to act on.
+
+  BOTTOM LINE across both gate tests: the ELEVATION gate is the one real win (SLC,
+  terrain, real Delta-elev). The TEMPERATURE gate needs genuinely spatial temp
+  (station thermometers with real micro-climate spread, or a fine terrain-following
+  temp model) -- neither Pittsburgh's common-mode field nor absent SLC temp provides
+  it. NOTE: eval_inductive.py temp-gate wiring is uncommitted (user controls commits).
+
+================================================================================
+[2026-07-10  AOD FEATURE ablation on Pittsburgh]  WHERE: scripts/eval_inductive.py
+  wired AOD as a never-masked node feature (new --aod-feature, + --aod-anomaly).
+  NOTE: AOD had never actually been tested before -- load_aod existed in build_graph2
+  but train.py has ZERO aod refs; the "test aod" commit only added the loader/fetch.
+  So this is the first real AOD result. Loaded via bg.load_aod (no train.py change).
+
+  AOD is the RIGHT KIND of covariate (unlike temp): GENUINELY SPATIAL.
+    spatial std 0.0208 on 0.170 mean (~12%); spatial/temporal ratio 0.093
+    (vs temp 0.007 -- 13x more spatial signal). Coverage 33% (daily + cloud gaps)
+    -> a FEATURE (field-mean fill on misses), not a gate.
+
+  RESULT (MAE ug/m3, 8 seeds, strong base):   IDW floor 5.203
+    base                 5.077 +-0.456   R2 .532  corr .747
+    + AOD (raw level)    5.071 +-0.474   R2 .536  corr .752   paired 5/8, -0.1% (neutral)
+    + AOD (spatial anom) 5.099 +-0.428   R2 .532  corr .747   paired 4/8, +0.4% (no better)
+  => AOD NEUTRAL ON MAE. Raw version nudges R2/corr the right way (captures a little
+  real spatial variance) but it does NOT translate to MAE. Anomaly reframing (subtract
+  per-hour city-mean to isolate WHERE-signal) is slightly WORSE -- the city-mean is
+  noisy at 33% coverage and subtracting it injects noise.
+  INTERPRETATION: AOD's spatial info is largely REDUNDANT with the IDW/PM-neighbour
+  structure the strong base already exploits -> no MAE headroom to capture. It's a real
+  covariate (not common-mode like temp), just not additive on top of dense PM neighbours.
+
+  SCOREBOARD across all covariates tested on the strong base (inductive, 8 seeds):
+    ELEVATION GATE   -- REAL WIN on terrain (SLC 7/8 seeds, -2.7%), inert on flat. ***
+    elevation feature-- hurts (overfit). drop.
+    TEMPERATURE gate -- wash (Pittsburgh temp is common-mode, spatial std 0.06C).
+    AOD feature      -- neutral on MAE (tiny R2/corr uptick), redundant w/ PM neighbours.
+  Only the elevation GATE produces a real MAE win, and only where terrain varies.
+  All wiring (temp-gate, aod-feature, aod-anomaly) is UNCOMMITTED (user controls commits).

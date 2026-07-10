@@ -124,6 +124,25 @@ def run_seed(seed, graph, args):
     z_t = torch.tensor(z, dtype=torch.float)
     obs_t = torch.tensor(obs)
 
+    # ---- TEMPERATURE GATE input (per-node standardized surface temp) ------------
+    # Surface temp is a never-masked covariate (knowable everywhere, like elevation),
+    # so it feeds the per-node gate at ALL nodes with NO target leakage. Standardize
+    # over the whole window with a single mean/std (temperature.py's spec: s carries
+    # seasonal+diurnal+spatial variation, centred at gate==1). Missing-sensor NaNs ->
+    # 0 -> gate==1 (inert) for that node. temp_wide is per-SENSOR here (Pittsburgh),
+    # so s genuinely varies in space -> the gate can discriminate locations.
+    temp_z_t = None
+    if args.temp_gate:
+        if not has_temp:
+            raise SystemExit("--temp-gate needs temperature data but has_temp=False "
+                             f"for city={args.city}")
+        tw = temp_wide.to_numpy(dtype=np.float64)          # [T, N] °C
+        finite = np.isfinite(tw)
+        tmu, tsd = tw[finite].mean(), tw[finite].std() + 1e-6
+        ts = (tw - tmu) / tsd
+        ts[~finite] = 0.0                                  # missing -> neutral gate
+        temp_z_t = torch.tensor(ts, dtype=torch.float)
+
     def to_ug(zval):  # invert z-score + transform back to ug/m3
         return inv(zval * sigma + mu)
 
@@ -174,14 +193,46 @@ def run_seed(seed, graph, args):
         e = np.asarray(elev, dtype=np.float64)
         elev_col = torch.tensor((e - e.mean()) / (e.std() + 1e-6),
                                 dtype=torch.float).reshape(-1, 1)
-    node_in = 1 + int(args.elev_feature) + int(args.idw_feature)
+
+    # ---- AOD FEATURE (satellite column aerosol, never-masked) -------------------
+    # MAIAC 1 km AOD sampled per sensor: a GENUINELY SPATIAL covariate (spatial std
+    # ~0.021 on a 0.17 mean, ~12%), unlike common-mode temp/ERA5. Knowable at ALL
+    # nodes (satellite), so no leakage feeding it at held-out test nodes. It's daily
+    # + cloud-gappy (~33% coverage) so it's a FEATURE (not a gate): standardize over
+    # finite cells, missing -> 0 (field-mean/neutral). Time-varying -> appended per t.
+    aod_z_t = None
+    if args.aod_feature:
+        aod_csv = bg.GROUP_CONFIG[args.sensor_set].get("aod_csv")
+        aod_wide, has_aod = bg.load_aod(aod_csv, list(ids), pm.index)
+        if not has_aod:
+            raise SystemExit(f"--aod-feature needs AOD data but none for city={args.city}")
+        aw = aod_wide.to_numpy(dtype=np.float64)          # [T, N]
+        fin = np.isfinite(aw)
+        if args.aod_anomaly:
+            # SPATIAL ANOMALY: subtract each hour's city-mean (over present sensors)
+            # so the feature is "dustier/cleaner than the metro right now" -- pure
+            # discriminative spatial signal, dropping the common-mode daily level
+            # that carries no WHERE information for interpolation.
+            row = np.where(fin, aw, np.nan)
+            rowmean = np.nanmean(row, axis=1, keepdims=True)
+            aw = aw - rowmean
+        amu, asd = aw[fin].mean(), aw[fin].std() + 1e-6
+        az = (aw - amu) / asd
+        az[~fin] = 0.0                                     # missing -> neutral
+        aod_z_t = torch.tensor(az, dtype=torch.float)
+
+    node_in = (1 + int(args.elev_feature) + int(args.aod_feature)
+               + int(args.idw_feature))
 
     def node_features(t):
         x = z_t[t].reshape(-1, 1).clone()
         x[hidden_input, 0] = UNKNOWN          # val+test never reveal their PM
+        cols = [x]
         if elev_col is not None:
-            return torch.cat([x, elev_col], dim=1)
-        return x
+            cols.append(elev_col)
+        if aod_z_t is not None:
+            cols.append(aod_z_t[t].reshape(-1, 1))
+        return torch.cat(cols, dim=1) if len(cols) > 1 else x
 
     delev = edge_delev if args.elev_gate else torch.zeros_like(edge_delev)
 
@@ -228,7 +279,8 @@ def run_seed(seed, graph, args):
             base = idw_base(int(t), visible)
             if args.idw_feature:
                 x = torch.cat([x, base.reshape(-1, 1)], dim=1)   # base as a feature
-            out = model(x, edge_index, edge_weight, edge_attr_t[t], delev, None)[:, 0]
+            out = model(x, edge_index, edge_weight, edge_attr_t[t], delev,
+                        None if temp_z_t is None else temp_z_t[t])[:, 0]
             pred = (base if args.idw_prior else 0.0) + out
             step_loss = loss_fn(pred[targets], z_t[t][targets])
             # keep the correction small so we can't stray far below the IDW floor
@@ -255,7 +307,8 @@ def run_seed(seed, graph, args):
             base = idw_base(t, visible)
             if args.idw_feature:
                 x = torch.cat([x, base.reshape(-1, 1)], dim=1)
-            out = model(x, edge_index, edge_weight, edge_attr_t[t], delev, None)[:, 0]
+            out = model(x, edge_index, edge_weight, edge_attr_t[t], delev,
+                        None if temp_z_t is None else temp_z_t[t])[:, 0]
             pred_z = (base if args.idw_prior else 0.0) + out
             for node in test_idx:
                 if obs[t, node]:
@@ -318,6 +371,15 @@ def main():
                     help="add never-masked DEM elevation channel (ablation; GraPhy base=off)")
     ap.add_argument("--elev-gate", action="store_true",
                     help="enable the elevation gate (ablation; GraPhy base=off)")
+    ap.add_argument("--temp-gate", action="store_true",
+                    help="enable the per-node temperature gate (needs per-sensor temp; "
+                         "Pittsburgh only so far). Ablation; GraPhy base=off")
+    ap.add_argument("--aod-feature", action="store_true",
+                    help="add never-masked satellite AOD channel (spatially varying "
+                         "covariate; needs aod_csv, Pittsburgh only). Ablation")
+    ap.add_argument("--aod-anomaly", action="store_true",
+                    help="feed AOD as a per-hour SPATIAL ANOMALY (minus city-mean) "
+                         "instead of the raw level -> pure discriminative signal")
     args = ap.parse_args()
 
     bg.use_city(args.city)
@@ -331,7 +393,7 @@ def main():
 
     print(f"[repro] city={args.city} wind={args.wind} hidden={args.hidden} "
           f"layers={args.layers} epochs={args.epochs} elev_feat={args.elev_feature} "
-          f"elev_gate={args.elev_gate}")
+          f"elev_gate={args.elev_gate} temp_gate={args.temp_gate}")
     graph = tr.build_static_graph()
 
     seeds = [int(s) for s in args.seeds.split(",")]
