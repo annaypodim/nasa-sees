@@ -167,6 +167,17 @@ def run_seed(seed, graph, args):
             log_bw = torch.nn.Parameter(torch.tensor(np.log(2000.0), dtype=torch.float))
         else:
             w = 1.0 / (dmat + 1.0)
+            if args.elev_kernel:
+                # TERRAIN-AWARE PRIOR: downweight cross-terrain sensor pairs by their
+                # elevation separation, so the IDW prior interpolates preferentially
+                # WITHIN an airmass/valley rather than across a ridge. Factor
+                # exp(-|Δelev|/h), h = vertical decay length (m). Flat ground ->
+                # Δelev≈0 -> factor≈1 (inert), so it self-disables off terrain just
+                # like the elevation gate -- but it reshapes the PRIOR (which does most
+                # of the work) instead of only the small learned correction.
+                e = np.asarray(elev, dtype=np.float64)
+                de = np.abs(e[:, None] - e[None, :])
+                w = w * np.exp(-de / max(args.elev_kernel_h, 1.0))
             np.fill_diagonal(w, 0.0)
             Wmat = torch.tensor(w, dtype=torch.float)
 
@@ -371,6 +382,11 @@ def main():
                     help="add never-masked DEM elevation channel (ablation; GraPhy base=off)")
     ap.add_argument("--elev-gate", action="store_true",
                     help="enable the elevation gate (ablation; GraPhy base=off)")
+    ap.add_argument("--elev-kernel", action="store_true",
+                    help="terrain-aware IDW PRIOR: multiply the 1/d kernel by "
+                         "exp(-|Δelev|/h) so the prior weights within-airmass pairs")
+    ap.add_argument("--elev-kernel-h", type=float, default=150.0,
+                    help="vertical decay length (m) for --elev-kernel (default 150)")
     ap.add_argument("--temp-gate", action="store_true",
                     help="enable the per-node temperature gate (needs per-sensor temp; "
                          "Pittsburgh only so far). Ablation; GraPhy base=off")

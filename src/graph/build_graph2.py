@@ -173,6 +173,23 @@ CITY_CONFIG = {
             ),
         },
     ),
+    # DENSITY-MATCHED Fresno: wider Fresno-Clovis bbox fetch (43 usable sensors, no
+    # spacing thinning) to match GraPhy's 41-node network and close the ~1.8x gap to
+    # their MAE 2.38 (the residual gap was network density). Same Oct'23-Jan'24 window.
+    # No per-sensor wind for this new set -> zero-fill; fine because the winning config
+    # runs --no-convection (wind feeds only the convection module). EPA extra-fields
+    # fetched, so EPA_CORRECT works.
+    "fresno_dense": dict(
+        coords_file=DATA_DIR / "fresno_dense" / "coords" / "sensor_lat_long_alt",
+        utm_crs="EPSG:32611",          # UTM zone 11N (Central California)
+        groups={
+            "urban": dict(
+                purple_air_dir=DATA_DIR / "fresno_dense" / "pm25" / "urban",
+                wind_zip=DATA_DIR / "fresno_dense" / "wind" / "none.zip",
+                wind_dir=DATA_DIR / "fresno_dense" / "wind" / "urban",
+            ),
+        },
+    ),
 }
 
 

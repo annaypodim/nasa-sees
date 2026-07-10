@@ -348,3 +348,95 @@ direction (long-gap filling + terrain), which is where "strong AND novel" lives.
     AOD feature      -- neutral on MAE (tiny R2/corr uptick), redundant w/ PM neighbours.
   Only the elevation GATE produces a real MAE win, and only where terrain varies.
   All wiring (temp-gate, aod-feature, aod-anomaly) is UNCOMMITTED (user controls commits).
+
+================================================================================
+[2026-07-10  TERRAIN-AWARE IDW PRIOR KERNEL -- BEST MODEL LEVER FOUND]
+  WHERE: scripts/eval_inductive.py (--elev-kernel, --elev-kernel-h). Idea: the elev
+  GATE only reshapes the small learned CORRECTION; but the IDW PRIOR does most of the
+  work. So push terrain into the PRIOR KERNEL: w_ij = 1/(d+1) * exp(-|Δelev_ij|/h).
+  Cross-ridge pairs get downweighted -> the prior interpolates WITHIN a valley/airmass.
+  h = vertical decay length (m). Flat -> Δelev≈0 -> factor≈1 (self-disables, inert).
+
+  RESULT (SLC terrain, inductive, 8 seeds; IDW floor 5.103):
+    base                 4.824 +-0.93  R2 .624   (beats IDW +5.5%)
+    + elev gate          4.692        R2 .639   -2.7%   (prior 2026-07-10 result)
+    + elev kernel h=50   4.171 +-0.96  R2 .697  -13.5%  (beats IDW +18%)
+    + elev kernel h=100  4.173 +-0.99  R2 .695  -13.5%
+    + elev kernel h=150  4.266        R2 .688  -11.6%
+    + kernel h=100 +gate 4.126 +-0.96  R2 .700  -14.5%  (beats IDW +19%)  <- best
+  PAIRED base vs kernel h=100: WINS 8/8 seeds, mean -0.652 ug/m3 (-13.5%).
+  FRESNO flat control: base 4.371 -> kernel h=100 4.381 (+0.2%, INERT as designed).
+
+  => The terrain-aware PRIOR KERNEL is ~5x the elevation GATE's effect and unanimous
+  across seeds. Moved us from "beats IDW +5.5%" to +18-19% -- inside GraPhy's own
+  "beats IDW 9-51%" band, on terrain. h=50-100m sweet spot; gate adds a marginal
+  extra on top. BEST spatial-model lever of the whole session. Inert on flat ->
+  safe to leave on. All wiring UNCOMMITTED (user controls commits).
+
+  WHY IT WORKS (vs why the elev GATE was small): the prior is the workhorse; the
+  correction is regularized small (corr-reg 0.6). Terrain physics belongs in the
+  workhorse. Same lesson likely applies to WIND (anisotropic kernel: downweight
+  cross-wind / upwind pairs) -- untested, natural next kernel experiment.
+
+================================================================================
+[2026-07-10  TEMPORAL LONG-GAP FILLING -- the novelty axis]  WHERE: NEW driver
+  scripts/eval_temporal.py. Protocol: hold out contiguous TIME WINDOWS (gaps) from
+  otherwise-present sensors, predict each sensor's OWN missing hours. Model UNCHANGED
+  (same GraPhyNet/gates); time enters as FEATURES (persistence + lag1 + lag24) and a
+  learnable PRIOR blend  prior = b*persistence + (1-b)*spatial_IDW,  b=sigmoid(beta).
+  Leak-safe: known_mask = obs & ~test_gap & ~train_gap; all lag/persistence/IDW inputs
+  built from known_z (gap cells carry-forward filled) so no target value feeds a
+  feature/prior. Pittsburgh, 59 nodes, 4 seeds, gap x6 per sensor.
+
+  RESULT (MAE ug/m3):
+    GAP 24h:  spatial-only (memoryless)  5.585 R2 .497   <- the GraPhy-style floor
+              + temporal memory          3.694 R2 .737   -34% !!  (persist floor 5.457)
+              + temp-gate                3.685            -0.009 (noise)
+              + aod-feature              3.712            slightly worse
+    GAP 72h:  temporal                   4.405 R2 .553   (persist floor 7.116, R2<0)
+              + temp-gate                4.396            -0.009 (noise)
+              + aod                      4.419            worse
+              + temp + aod               4.410
+  LEARNED BLEND b (persistence weight): 24h -> 0.48,  72h -> 0.35. The model AUTOMATICALLY
+  downweights stale persistence for longer gaps and leans on the spatial prior. Exactly
+  the designed behavior -> mechanism validated.
+
+  FINDING 1 (WIN): TEMPORAL MEMORY is a large, real gain -- 34% MAE cut vs the memoryless
+  spatial-only model. This is the project NOVELTY: GraPhy is memoryless and leaves this
+  on the table. Model architecture UNCHANGED (time as features + prior blend, no
+  recurrence) -- confirms temporal can be added without touching GraPhyNet.
+
+  FINDING 2 (honest negative, now conclusive): temp-gate and AOD are REDUNDANT in BOTH
+  the spatial AND the temporal task. Hypothesis was temporal would activate them; it did
+  NOT (-0.009 / worse). ROOT CAUSE: the target's OWN PM history (persistence/lags) already
+  carries the regional-level dynamics that temp/AOD merely PROXY for. With dense PM data
+  -- spatial neighbours OR temporal history -- the proxy covariates add nothing. They are
+  proxies for PM dynamics we already measure directly. Verdict: temp/AOD parked for good
+  on dense networks; they'd only matter where PM data is genuinely sparse in BOTH axes.
+
+  SESSION SCOREBOARD (levers that move MAE):
+    * TERRAIN-AWARE IDW PRIOR KERNEL  -- SLC -13.5% (8/8 seeds), inert on flat.  WIN
+    * TEMPORAL MEMORY (gap-filling)   -- Pittsburgh -34% vs memoryless.          WIN + NOVEL
+    * elevation gate                  -- SLC -2.7% (subsumed by the kernel).     minor
+    * temp gate / AOD / elev feature  -- no help (redundant or wrong form).      dead
+  eval_temporal.py is NEW + all eval_inductive gate/kernel wiring UNCOMMITTED (user
+  controls commits).
+
+================================================================================
+[2026-07-10  MATCH GRAPHY DENSITY on Fresno -- BLOCKED on PurpleAir API credits]
+  User directive: fetch more Fresno sensors to match GraPhy's 41-node density (the
+  residual ~1.8x gap to MAE 2.38 is network density). Plan: widen the PurpleAir bbox
+  to greater Fresno-Clovis, no spacing thinning, --extra-fields (EPA), Oct'23-Jan'24.
+  LIST-ONLY confirmed 43 usable sensors in bbox 36.90,-119.92,36.60,-119.58 (alt
+  spread 37 m -- flat, as expected). Enough to match 41.
+  Added CITY_CONFIG['fresno_dense'] -> data/fresno_dense (zero-fill wind; fine because
+  winning config is --no-convection so wind is unused). Set to run --wind zero.
+
+  BLOCKER: the full history fetch died at sensor 9/43 with HTTP 402
+  PaymentRequiredError -- the PurpleAir API key is OUT OF POINTS (balance -20216).
+  Only 9 sensors downloaded -> FEWER than the current 18-sensor set, so unusable yet.
+  data/fresno (18 sensors) left INTACT (fetched to a separate dir).
+  TO RESUME: user must top up PurpleAir API credits (or supply another key); then
+  re-run the fetch (scripts/fetch_purpleair.py, same bbox/window) -> ~43 sensors ->
+  re-run eval_inductive --city fresno_dense --wind zero <strong-base> and compare MAE
+  to the 18-sensor 4.30 and to GraPhy 2.38. Everything else is ready and waiting.
