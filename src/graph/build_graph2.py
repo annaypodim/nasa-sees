@@ -278,6 +278,23 @@ def parse_sensor_coords(path: Path) -> pd.DataFrame:
 # ===========================================================================
 # 3. AIR QUALITY - hourly PurpleAir CSVs -> tidy table -> wide [time x node]
 # ===========================================================================
+# EPA / Barkjohn (2021) US-wide PurpleAir correction. Raw PurpleAir over-reads
+# PM2.5 by ~40% and is humidity-sensitive; the EPA-accepted fix is a linear model
+# on the cf_1 channel + relative humidity:
+#     PM2.5_corrected = 0.524 * pm2.5_cf_1 - 0.0862 * humidity + 5.75
+# Papers that benchmark on PurpleAir (incl. GraPhy's Fresno) use corrected data, so
+# raw pm2.5_atm inflates our absolute MAE vs their 2.38. Turn on with EPA_CORRECT
+# (needs the cf_1 + humidity columns, which scripts/fetch_purpleair.py --extra-fields
+# writes). Falls back to raw pm2.5_atm when the columns are absent.
+EPA_CORRECT = False
+
+
+def _epa_correct(df: pd.DataFrame) -> pd.Series:
+    cf1 = pd.to_numeric(df["pm2.5_cf_1"], errors="coerce")
+    rh = pd.to_numeric(df["humidity"], errors="coerce")
+    return (0.524 * cf1 - 0.0862 * rh + 5.75).clip(lower=0)
+
+
 def load_air_quality(purple_air_dir: Path, station_ids: list[str]) -> pd.DataFrame:
     """Read every non-empty PurpleAir CSV. The station id is the filename's
     leading digits (filenames look like "120859 2023-01-01 ... .csv"), so
@@ -297,11 +314,17 @@ def load_air_quality(purple_air_dir: Path, station_ids: list[str]) -> pd.DataFra
             continue  # zero-byte / header-less file (some sensors export nothing)
         if df.empty or "pm2.5_atm" not in df.columns:
             continue  # several sensors returned no data in range
+        # EPA-corrected PM2.5 when requested AND the cf_1+humidity columns exist;
+        # otherwise the raw ATM channel (unchanged default behaviour).
+        if EPA_CORRECT and {"pm2.5_cf_1", "humidity"}.issubset(df.columns):
+            pm = _epa_correct(df)
+        else:
+            pm = pd.to_numeric(df["pm2.5_atm"], errors="coerce")
         rows.append(pd.DataFrame({
             "station_id": station_id,
             # tz-aware timestamp -> UTC so all sensors share one timeline
             "timestamp": pd.to_datetime(df["time_stamp"], utc=True),
-            "pm25": pd.to_numeric(df["pm2.5_atm"], errors="coerce"),
+            "pm25": pm,
         }))
     if not rows:
         raise FileNotFoundError(

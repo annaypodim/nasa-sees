@@ -36,17 +36,24 @@ def mlp(in_dim: int, out_dim: int, hidden: int) -> nn.Sequential:
 
 
 class Fusion(nn.Module):
-    def __init__(self, dim: int, hidden: int = 8):
+    def __init__(self, dim: int, hidden: int = 8, n_modules: int = 3):
         super().__init__()
-        # in: the three outputs concatenated (3*dim).  out: one score per module.
-        self.gate_mlp = mlp(3 * dim, 3, hidden)
+        # in: the n active module outputs concatenated (n*dim). out: one score each.
+        # n_modules is now configurable so we can ablate modules (e.g. diffusion-only
+        # -> n_modules=1) without a degenerate softmax over dead inputs. See model.py.
+        self.n_modules = n_modules
+        self.gate_mlp = mlp(n_modules * dim, n_modules, hidden)
 
-    def forward(self, local_out, diffusion_out, convection_out):
-        z = torch.cat([local_out, diffusion_out, convection_out], dim=1)  # [N, 3*dim]
-        w = torch.softmax(self.gate_mlp(z), dim=1)   # [N, 3], each row sums to 1
-        # weight each module's output by its column of w, then add them up
-        stacked = torch.stack([local_out, diffusion_out, convection_out], dim=1)  # [N, 3, dim]
-        out = (w[:, :, None] * stacked).sum(dim=1)   # [N, dim]
+    def forward(self, *outs):
+        """Blend a variable number of [N, dim] module outputs by a per-node softmax.
+        With one module this is a learned pass-through; with three it is the original
+        [local, diffusion, convection] competition."""
+        assert len(outs) == self.n_modules, \
+            f"Fusion expected {self.n_modules} module outputs, got {len(outs)}"
+        z = torch.cat(outs, dim=1)                       # [N, n*dim]
+        w = torch.softmax(self.gate_mlp(z), dim=1)       # [N, n], each row sums to 1
+        stacked = torch.stack(outs, dim=1)               # [N, n, dim]
+        out = (w[:, :, None] * stacked).sum(dim=1)       # [N, dim]
         return out, w
 
 

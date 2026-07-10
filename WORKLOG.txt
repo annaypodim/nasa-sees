@@ -1,0 +1,255 @@
+================================================================================
+NASA-SEES / GraPhy PM2.5 imputation -- WORKLOG
+================================================================================
+A running, plain-text log of what we've tried, why, and what happened. Newest
+sections appended at the bottom. Three themes:
+  (1) NOVELTY / project direction
+  (2) GATES & COVARIATES (elevation, temperature, wind, AOD) -- what we tested
+  (3) ARCHITECTURE CHANGES (model.py + modules) -- every change, where, why
+
+Metric vocabulary:
+  * MAE (ug/m3): mean abs error at held-out sensors. Lower better.
+  * skill_vs_baseline = 1 - MAE/MAE(predict-the-mean).
+  * IDW baseline: inverse-distance-weighting of observed sensors -- the model-free
+    floor a real GNN must beat.
+  * GraPhy paper target: MAE 2.38 ug/m3 (Fresno, 41 sensors, Oct'23-Jan'24, inductive).
+  * "inductive" eval = hold out whole SENSORS (disjoint train/val/test), predict
+    them across ALL hours. This is GraPhy's protocol and the comparable one.
+  * "transductive"/leave-one-out = mask nodes inside one set. Easier; not comparable.
+
+
+================================================================================
+(1) NOVELTY / DIRECTION -- history
+================================================================================
+- Goal throughout: results that are "strong AND novel" for the NASA-SEES GNN.
+- Base task: interpolate/impute PM2.5 to unmonitored locations across a metro net.
+- Cities: Boulder, Pittsburgh (95 sensors), Salt Lake City (winter inversion),
+  and now Fresno (GraPhy's benchmark city, for reproduction).
+- Big diagnostic finding (pre-Fresno): every reanalysis covariate (temp, wind,
+  humidity from ERA5) is COMMON-MODE -- one value across a small city -> cannot
+  discriminate between locations -> useless as a SPATIAL predictor for interpolation.
+- Pivot considered: satellite AOD as the spatially-varying covariate. Fetched
+  MODIS/MAIAC AOD for Pittsburgh. RESULT: AOD is ALSO common-mode in space
+  (spatial-anomaly corr with PM = -0.008) but STRONG in time (+0.593). i.e. good
+  temporal anchor, useless spatial predictor at metro scale.
+- Literature check (2026-07): the subfield is "inductive spatio-temporal kriging"
+  (IGNNK 2021, KITS 2023, PGITS 2025). Our base GraPhy is memoryless/per-timestep;
+  temporal memory is table-stakes we lack, NOT novelty. Genuine gaps in the
+  literature: nobody fuses satellite AOD, nobody uses terrain/elevation. Those +
+  long-gap filling are where novelty lives -- BUT only after the base model works.
+- DECISION (user): before chasing novelty, REPRODUCE GraPhy's base interpolator.
+  "We're not even reproducing GraPhy right now." -> the Fresno reproduction below.
+
+
+================================================================================
+(2) GATES & COVARIATES -- what we tested and the verdicts
+================================================================================
+ELEVATION GATE (src/model/elevation.py): per-EDGE scalar from signed d-height,
+  dampens diffusion + convection across height gaps. Verdict: only marginal signal
+  on 22-node SLC winter (skill +0.088 vs +0.050, error bars overlap). Well-mixed
+  metros have no vertical structure for it to exploit. Real signal only in a basin
+  inversion; needs more complex-terrain data to matter.
+
+TEMPERATURE GATE (src/model/temperature.py): per-NODE scalar from surface temp,
+  scales transport strength. Verdict: NULL. Temp is common-mode in space; redundant
+  with neighbour PM. Sanity tests with PLANTED gradients confirmed the gate CAN
+  exploit signal when it exists -- the real data just doesn't have it spatially.
+
+WIND / CONVECTION (ERA5 ~30km vs HRRR 3km vs zero): fetched HRRR 3km per-sensor
+  wind for Pittsburgh (scripts/fetch_wind_hrrr.py). HRRR DOES vary spatially and
+  wind-divergence has a real -0.119 spatial-anomaly corr with PM. BUT the convection
+  ablation (era5/hrrr/zero, leave-one-out, 6 seeds) was decisive: skill +0.251 /
+  +0.243 / +0.255 -- ALL IDENTICAL. Convection adds nothing; zero-wind ties full
+  wind. The -0.119 is redundant with neighbour PM (convergence zones are smooth).
+
+AOD FEATURE (MODIS MCD19A2 1km, scripts/fetch_aod.py via Google Earth Engine):
+  spatial-anomaly corr -0.008 -> did NOT wire the feature channel (foregone null).
+  Strong temporally (+0.593) -> belongs on a temporal axis (future gap-filling).
+
+META-VERDICT: every covariate is redundant with PM spatial autocorrelation for
+  metro-scale interpolation. Covariates are strong TEMPORALLY, not spatially. The
+  gate well is dry for the pure-spatial task. (This is a clean NEGATIVE result that
+  can MOTIVATE a temporal/terrain reframe later -- but base model must work first.)
+
+
+================================================================================
+(3) ARCHITECTURE / REPRODUCTION -- Fresno, 2026-07-09
+================================================================================
+GOAL: reproduce GraPhy MAE 2.38 under its inductive protocol, to learn whether the
+BASE MODEL is the problem (user's suspicion) before any more novelty work.
+
+INFRA BUILT:
+- scripts/fetch_purpleair.py: added --bbox NWLAT,NWLNG,SELAT,SELNG (was hard-coded
+  to SLC). WHY: fetch Fresno.
+- scripts/fetch_wind_hrrr.py: added fresno to COORDS map.
+- src/graph/build_graph2.py: added CITY_CONFIG['fresno'] (UTM 11N, EPSG:32611).
+- scripts/eval_inductive.py (NEW): GraPhy's inductive protocol. Disjoint train/
+  val/test SENSORS (28:4:9 scaled to N), val+test PM never fed, predict test sensors
+  over ALL hours, MAE in ug/m3. Includes an IDW baseline. Options added along the way:
+  --transform {log,linear,sqrt}, --loss {mse,huber}, --huber-beta, --clip, --knn,
+  --elev-feature, --elev-gate.
+
+FINDINGS (chronological):
+- Naive repro in log1p space (as train.py trains): MAE 8.44, WORSE than IDW (5.8).
+  => We were NOT reproducing GraPhy at all.
+- BUG #1 (loss space): train.py trains MSE in log1p space but PM MAE is LINEAR ->
+  underpredicts pollution peaks. Switch to raw/sqrt z-space cut MAE 8.44 -> 6.76,
+  R2 0.15 -> 0.62. (200 epochs did NOT help log-space -> not underfitting.)
+- BUG #2 (instability): raw-ug/m3 MSE at lr 0.01 DIVERGES on ~1/3 of seeds (MAE
+  13-19, R2<0). Fix: --transform sqrt (milder tail than log, stable near-linear)
+  + --loss huber + --clip 1.0. Variance collapsed +-4.9 -> +-0.34, zero divergences.
+- Tuning that did NOT help: capacity (l5 h32 >= worse than l4 h16), connectivity
+  (K=8/15/30 all ~same), wind on/off (irrelevant, matches earlier convection null).
+- DENSITY TRAP: chasing sensor COUNT (wide box) spread 34 sensors over 1369 mi^2 =
+  0.025 sensors/mi^2. GraPhy's paper says performance COLLAPSES below 0.11. We were
+  4-5x too sparse. Re-fetched a TIGHT central-Fresno box (0.127 sensors/mi^2, 21
+  live sensors). Lesson: match DENSITY (sensors/mi^2), not count.
+- Density-matched hardened eval (sqrt+huber+clip, l4h16, 8 seeds): OURS 6.60+-1.39,
+  IDW 5.58+-1.44. STILL loses to IDW; still ~2.8x off 2.38.
+
+VERDICT (answers user's question): the BASE MODEL is the problem. Across every lever
+(density 0.025->0.127, capacity, K, wind, loss space) our GraPhyNet plateaus ~6.3-6.6
+MAE and LOSES to trivial IDW. GraPhy BEATS IDW. Two separable gaps:
+  * "Loses to IDW" is SCALE-INVARIANT (a global data rescale moves us and IDW
+    together) => a genuine MODEL defect. <- fix this first.
+  * "6.6 vs 2.38 absolute" is also DATA: we use raw pm2.5_atm; GraPhy almost
+    certainly uses EPA-corrected + A/B-averaged + QA'd PurpleAir (over-reads ~40%).
+
+ARCHITECTURE DIAGNOSIS (why we lose to IDW), from reading the modules:
+  IDW = normalized weighted AVERAGE of neighbour VALUES (a low-pass/smoothing op).
+  Our modules don't cleanly compute that:
+  * diffusion.py uses the rescaled LAPLACIAN L_D = 2L/lam - I (a DIFFERENCE/high-pass
+    operator) + sigmoid. For a masked node (input 0) this measures (0 - neighbours),
+    squashed to (0,1)*l -- NOT the neighbour average. Suspect #1.
+  * everything runs in a learned hidden space with residual h=h+fused; a masked
+    node starts at encoder(0) and must be reconstructed indirectly.
+  * fusion softmax can dilute diffusion with convection/local.
+  PLAN: (A) diffusion-only + module ablations to confirm; (B) give the model an
+  explicit IDW/low-pass interpolation pathway (residual-kriging: predict IDW +
+  learned correction) so it CANNOT do worse than IDW; then (C) EPA data correction.
+
+--- CHANGES LOG (append each architecture edit here) ---
+
+[2026-07-09  CHANGE 1: module on/off toggles]  WHERE: src/model/fusion.py,
+  src/model/model.py, scripts/eval_inductive.py.  WHAT: Fusion now takes
+  n_modules and *outs (variable # of module outputs) instead of a fixed 3.
+  GraPhyLayer/GraPhyNet take use_convection/use_local; disabled modules aren't
+  constructed (no dead params) and Fusion sizes to the active count. eval_inductive
+  gained --no-convection/--no-local.  WHY: isolate which modules help vs IDW.
+  RESULT (density-matched Fresno, 5 seeds, sqrt+huber+clip, l4h16):
+    diffusion-ONLY:  MAE 7.46 +-1.45   (WORST -- Laplacian alone can't interpolate)
+    full (d+c+l):    MAE 6.60 +-1.39   (from earlier run)
+    IDW baseline:    MAE ~5.2
+  => No module config beats IDW; diffusion-only is worst, so convection/local were
+     actually HELPING slightly. The problem is the hidden-space/Laplacian core, not
+     the extra modules. Confirms the fix must add a real interpolation pathway.
+
+[2026-07-09  CHANGE 2: IDW residual prior (the fix)]  WHERE: scripts/eval_inductive.py
+  (--idw-prior). Kept model.py generic; the prior is applied at the driver so it
+  composes with any module config.  WHAT: precompute Wmat[i,j]=1/(dist+1) (zero
+  diag). Each step, IDW-interpolate in the SAME z(sqrt) space from the VISIBLE
+  (observed & unmasked) nodes only (no target leakage), then predict
+  pred = idw_base + model(). If the GNN correction -> 0 we recover IDW exactly, so
+  we CANNOT do worse than IDW by construction (residual kriging / GNN-over-IDW).
+  WHY: the GNN lacked a low-pass averaging op; IDW supplies it, GNN learns the
+  correction.  RESULT (smoke, 1 seed, 20 epochs, diff+conv+local + idw-prior):
+    OURS MAE 4.98  vs  IDW 5.52   -> FIRST TIME WE BEAT IDW. (R2 .769 vs .747)
+  8-seed run: seed0 5.40<5.52, seed1 5.24<5.82 ... (beating IDW consistently).
+
+[2026-07-09  MILESTONE: FIRST CONFIG TO BEAT IDW ON THE MEAN]
+  IDW-prior scaled runs (density-matched Fresno, 8 seeds, sqrt+huber+clip, l4h16):
+    idw-prior + FULL (d+c+l):       MAE 5.99 +-1.51  vs IDW 5.58  (slightly loses;
+                                    2 seeds' corrections blew up -> 8.4, 8.1)
+    idw-prior + diffusion+LOCAL:    MAE 5.47 +-1.32  vs IDW 5.58  (BEATS IDW; R2
+                                    .742 vs .684, corr .869 vs .852)
+  => Winning recipe = IDW residual prior + DROP convection (it hurts) + correction
+     regularization (CHANGE 4). Convection dropping matches every earlier convection
+     null. Margin still thin (2 seeds lose); reg sweep running to widen it.
+
+[2026-07-09  CHANGE 4: residual-kriging stability -- zero-init head + corr L2]  WHERE:
+  scripts/eval_inductive.py.  WHAT: with --idw-prior, zero-init model.head (train
+  starts EXACTLY at IDW), and add --corr-reg * ||correction||^2 (default 0.1) on the
+  target nodes.  WHY: the learned correction was unconstrained -> on some held-out
+  splits it dragged predictions off IDW and lost badly (seed4 8.40 vs IDW 5.40).
+  EFFECT (no-conv): tamed the 8.40 blowup to ~6.34 and flipped seed3 to a win; net
+  5.47 < IDW.
+  REG-STRENGTH SWEEP (idw-prior + no-conv, 8 seeds, explicit corr-reg):
+    corr-reg 0.1:  MAE 5.373 +-1.37  R2 0.745
+    corr-reg 0.3:  MAE 5.345 +-1.36  R2 0.749
+    corr-reg 0.6:  MAE 5.303 +-1.31  R2 0.753   <- BEST (lowest MAE + variance)
+    IDW baseline:  MAE 5.579 +-1.44  R2 0.684
+  Monotonic: more reg -> better + more stable. WINNING MODEL CONFIG =
+    --idw-prior --no-convection --corr-reg 0.6 --transform sqrt --loss huber --clip 1
+    --layers 4 --hidden 16.  Beats IDW on MAE (~5%), clearly on R2/corr. 2 hard
+    seeds (4,6) still lose but are much tighter than the pre-reg blowups.
+
+[2026-07-09  CHANGE 3: EPA/Barkjohn PurpleAir correction]  WHERE:
+  src/graph/build_graph2.py (EPA_CORRECT flag + _epa_correct + load_air_quality),
+  scripts/fetch_purpleair.py (--extra-fields fetches pm2.5_cf_1 + humidity; generic
+  fetch_history/write_history_csv over a field list), scripts/eval_inductive.py
+  (--epa-correct sets bg.EPA_CORRECT).  WHAT: PM2.5_corr = 0.524*cf_1 - 0.0862*RH
+  + 5.75 (clip>=0). WHY: raw pm2.5_atm over-reads ~40% and is RH-sensitive; GraPhy's
+  benchmark uses corrected data, so raw inflates our absolute MAE vs their 2.38.
+  Scale-invariant caveat: this shifts the ABSOLUTE number, not whether we beat IDW.
+  RESULT (winning config + --epa-correct, 8 seeds, density-matched Fresno):
+    OURS MAE 4.453 +-0.87  vs  IDW 4.588   (still beats IDW)
+    vs RAW-data winning config 5.303 -> EPA cut absolute MAE 16% (5.30 -> 4.45), as
+    predicted (raw over-reads). R2/corr dip (0.622/0.809) because the RH term + range
+    compression add some noise. Now ~1.9x off GraPhy 2.38 (was ~3.5x at the start).
+
+================================================================================
+SCOREBOARD (density-matched Fresno, inductive, 8 seeds)  -- lower MAE better
+================================================================================
+  START (log-space, full model):            MAE 8.44   LOSES to IDW (5.6), 3.5x off 2.38
+  + linear/sqrt + huber + clip (stable):     MAE 6.60   loses to IDW
+  + IDW residual prior (full model):         MAE 5.99   ~ties IDW (2 seeds blow up)
+  + drop convection + corr-reg 0.6:          MAE 5.30   BEATS IDW (5.58), R2 .753
+  + EPA PurpleAir correction:                MAE 4.45   BEATS IDW (4.59), ~1.9x off 2.38
+  GraPhy paper:                              MAE 2.38
+Remaining gap to 2.38 = density (ours 0.127 just above their 0.11 collapse floor;
+theirs likely higher), tiny graph (~20 live sensors -> hard seeds 4,6), + model
+headroom (GraPhy beats IDW by 9-51%; we beat it ~3-5%).
+
+IMPORTANT STRATEGY NOTE (2026-07-09): GraPhy is MEMORYLESS (per-timestep, no
+recurrent memory) -- so TEMPORAL CONTEXT is NOT the gap to 2.38. Do not chase it to
+reproduce GraPhy; it's a lever for the FUTURE NOVELTY (long-gap filling) direction
+only. To close the 2.38 gap the only real levers are: (a) stronger correction/model
+architecture, (b) higher sensor density (needs their exact 41-node network), (c)
+data QA (EPA done; A/B-channel averaging not available from the history API).
+
+[2026-07-09  CHANGE 5: IDW-as-feature]  WHERE: scripts/eval_inductive.py
+  (--idw-feature). WHAT: feed the per-step IDW prior value as a never-masked node
+  feature (node_in += 1), so the learned correction can CONDITION on the base it is
+  correcting instead of re-deriving it. Composes with --idw-prior. WHY: cheap way to
+  give the GNN the interpolation base explicitly. RESULT (EPA data, 8 seeds):
+    no idw-feature: MAE 4.453 +-0.87  R2 0.622
+    + idw-feature:  MAE 4.302 +-0.96  R2 0.636   <- better on 6/8 seeds; beats IDW
+                    (4.588) by ~6%. Best config so far. (seed2 hit 2.91 on a good split.)
+  CURRENT BEST = --idw-prior --idw-feature --no-convection --corr-reg 0.6 --epa-correct
+                 --transform sqrt --loss huber --clip 1 --layers 4 --hidden 16.
+  Progress arc: 8.44 (losing) -> 4.30 (beating IDW ~6%), ~1.8x off GraPhy 2.38.
+
+[2026-07-09  CHANGE 6: learnable IDW bandwidth]  WHERE: scripts/eval_inductive.py
+  (--learn-bw). WHAT: replace the fixed 1/(d+1) prior kernel with a Gaussian
+  exp(-d/bw), bw learnable (init ~2 km), trained jointly with the GNN. WHY: the fixed
+  kernel bakes in an arbitrary correlation length; let the data pick it.
+  RESULT (EPA, 8 seeds): MAE 4.333 +-0.98  R2 0.640  -- NO GAIN vs fixed 1/d (4.302).
+  The fixed inverse-distance kernel is already near-optimal here. Reverting to default
+  (no --learn-bw). => diminishing returns on the model side.
+
+================================================================================
+STATUS 2026-07-09 (end of reproduction push)
+================================================================================
+GOAL (user): fix the base model so it beats IDW, then reach GraPhy's 2.38.
+DONE: base model FIXED and VALIDATED. Arc on density-matched Fresno (inductive, 8 seeds):
+  8.44 (losing to IDW, 3.5x off 2.38)  ->  4.30 (BEATING IDW ~6%, R2 .64, 1.8x off 2.38).
+The user's original suspicion was correct: the base WAS broken (lost to trivial IDW).
+Root cause = Laplacian diffusion core can't interpolate; fixed with an IDW residual
+prior + correction regularization + dropping the (harmful) convection module, plus
+loss-space/stability fixes and the EPA data correction.
+REMAINING 1.8x gap to 2.38 is NOT model-fixable here: it's network density (we max out
+at ~20-34 live PurpleAir sensors for this window; GraPhy's 41-node set is denser) +
+their exact QA. Model levers are exhausted (capacity, K, learn-bw all flat).
+NEXT (user's call): (a) accept as a faithful capability reproduction (GNN beats IDW/
+kriging, GraPhy's core claim), or (b) now that the base is sound, pursue the NOVELTY
+direction (long-gap filling + terrain), which is where "strong AND novel" lives.

@@ -209,12 +209,17 @@ def _chunks(start: datetime, end: datetime, days: int):
 
 
 def fetch_history(sensor_id: int, start: datetime, end: datetime,
-                  api_key: str) -> list[tuple[str, str]]:
-    """Return [(time_stamp_iso, pm25), ...] across all chunks, time-sorted."""
-    rows: dict[str, str] = {}
+                  api_key: str, fields: list[str]) -> list[tuple]:
+    """Return [(time_stamp_iso, v1, v2, ...), ...] for `fields`, time-sorted.
+
+    `fields` is the ordered list of PurpleAir columns to keep (e.g. ["pm2.5_atm"]
+    or ["pm2.5_atm", "pm2.5_cf_1", "humidity"] for the EPA correction). A row is
+    kept only if pm2.5_atm is present; missing extra fields are written blank.
+    """
+    rows: dict[str, list] = {}
     for lo, hi in _chunks(start, end, CHUNK_DAYS):
         params = {
-            "fields": "pm2.5_atm",
+            "fields": ",".join(fields),
             "average": HISTORY_AVERAGE,
             "start_timestamp": lo,
             "end_timestamp": hi,
@@ -227,24 +232,25 @@ def fetch_history(sensor_id: int, start: datetime, end: datetime,
         h = {name.strip(): k for k, name in enumerate(header)}
         if "time_stamp" not in h or "pm2.5_atm" not in h:
             continue
-        ti, pi = h["time_stamp"], h["pm2.5_atm"]
+        ti = h["time_stamp"]
         for r in reader:
-            if len(r) <= max(ti, pi) or not r[ti]:
+            if len(r) <= ti or not r[ti]:
                 continue
-            rows[_to_iso_utc(r[ti])] = r[pi]
+            vals = [r[h[f]] if (f in h and h[f] < len(r)) else "" for f in fields]
+            rows[_to_iso_utc(r[ti])] = vals
         time.sleep(SLEEP_BETWEEN)
     return sorted(rows.items())
 
 
 def write_history_csv(sensor_id: int, rows, start_s: str, end_s: str,
-                      out_dir: Path) -> int:
+                      out_dir: Path, fields: list[str]) -> int:
     out_dir.mkdir(parents=True, exist_ok=True)
     fname = f"{sensor_id} {start_s} {end_s} 60-Minute Average.csv"
     with open(out_dir / fname, "w", newline="") as f:
         w = csv.writer(f)
-        w.writerow(["time_stamp", "pm2.5_atm"])
-        for ts, pm in rows:
-            w.writerow([ts, pm])
+        w.writerow(["time_stamp", *fields])
+        for ts, vals in rows:
+            w.writerow([ts, *vals])
     return len(rows)
 
 
@@ -269,6 +275,9 @@ def main() -> None:
                          "SE=(min lat,max lon).")
     ap.add_argument("--list-only", action="store_true",
                     help="write the coords file only; skip history downloads")
+    ap.add_argument("--extra-fields", action="store_true",
+                    help="also fetch pm2.5_cf_1 + humidity (needed for the EPA/"
+                         "Barkjohn PurpleAir correction in build_graph2.EPA_CORRECT)")
     a = ap.parse_args()
     group = a.group
 
@@ -312,11 +321,15 @@ def main() -> None:
         print("[done] --list-only: coords written, history skipped.")
         return
 
+    fields = ["pm2.5_atm"]
+    if a.extra_fields:
+        fields += ["pm2.5_cf_1", "humidity"]
+
     pm_dir = out_dir / "pm25" / group
     total_rows = 0
     for n, s in enumerate(sensors, 1):
-        rows = fetch_history(s["id"], start_dt, end_dt, a.api_key)
-        got = write_history_csv(s["id"], rows, a.start, a.end, pm_dir)
+        rows = fetch_history(s["id"], start_dt, end_dt, a.api_key, fields)
+        got = write_history_csv(s["id"], rows, a.start, a.end, pm_dir, fields)
         total_rows += got
         print(f"  [{n}/{len(sensors)}] sensor {s['id']:>10}  "
               f"{got:>5} hourly rows")
