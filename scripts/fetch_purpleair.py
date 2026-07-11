@@ -209,12 +209,17 @@ def _chunks(start: datetime, end: datetime, days: int):
 
 
 def fetch_history(sensor_id: int, start: datetime, end: datetime,
-                  api_key: str) -> list[tuple[str, str]]:
-    """Return [(time_stamp_iso, pm25), ...] across all chunks, time-sorted."""
-    rows: dict[str, str] = {}
+                  api_key: str, fields: list[str]) -> list[tuple]:
+    """Return [(time_stamp_iso, v1, v2, ...), ...] for `fields`, time-sorted.
+
+    `fields` is the ordered list of PurpleAir columns to keep (e.g. ["pm2.5_atm"]
+    or ["pm2.5_atm", "pm2.5_cf_1", "humidity"] for the EPA correction). A row is
+    kept only if pm2.5_atm is present; missing extra fields are written blank.
+    """
+    rows: dict[str, list] = {}
     for lo, hi in _chunks(start, end, CHUNK_DAYS):
         params = {
-            "fields": "pm2.5_atm",
+            "fields": ",".join(fields),
             "average": HISTORY_AVERAGE,
             "start_timestamp": lo,
             "end_timestamp": hi,
@@ -227,24 +232,25 @@ def fetch_history(sensor_id: int, start: datetime, end: datetime,
         h = {name.strip(): k for k, name in enumerate(header)}
         if "time_stamp" not in h or "pm2.5_atm" not in h:
             continue
-        ti, pi = h["time_stamp"], h["pm2.5_atm"]
+        ti = h["time_stamp"]
         for r in reader:
-            if len(r) <= max(ti, pi) or not r[ti]:
+            if len(r) <= ti or not r[ti]:
                 continue
-            rows[_to_iso_utc(r[ti])] = r[pi]
+            vals = [r[h[f]] if (f in h and h[f] < len(r)) else "" for f in fields]
+            rows[_to_iso_utc(r[ti])] = vals
         time.sleep(SLEEP_BETWEEN)
     return sorted(rows.items())
 
 
 def write_history_csv(sensor_id: int, rows, start_s: str, end_s: str,
-                      out_dir: Path) -> int:
+                      out_dir: Path, fields: list[str]) -> int:
     out_dir.mkdir(parents=True, exist_ok=True)
     fname = f"{sensor_id} {start_s} {end_s} 60-Minute Average.csv"
     with open(out_dir / fname, "w", newline="") as f:
         w = csv.writer(f)
-        w.writerow(["time_stamp", "pm2.5_atm"])
-        for ts, pm in rows:
-            w.writerow([ts, pm])
+        w.writerow(["time_stamp", *fields])
+        for ts, vals in rows:
+            w.writerow([ts, *vals])
     return len(rows)
 
 
@@ -263,13 +269,36 @@ def main() -> None:
     ap.add_argument("--min-spacing-km", type=float, default=MIN_SPACING_KM,
                     help="drop sensors within this many km of a kept one "
                          "(0 = keep all). Thins the dense valley floor.")
+    ap.add_argument("--bbox", default=None, metavar="NWLAT,NWLNG,SELAT,SELNG",
+                    help="override the hard-coded box, e.g. Fresno "
+                         "'36.90,-119.95,36.62,-119.60'. NW=(max lat,min lon), "
+                         "SE=(min lat,max lon).")
     ap.add_argument("--list-only", action="store_true",
                     help="write the coords file only; skip history downloads")
+    ap.add_argument("--extra-fields", action="store_true",
+                    help="also fetch pm2.5_cf_1 + humidity (needed for the EPA/"
+                         "Barkjohn PurpleAir correction in build_graph2.EPA_CORRECT)")
+    ap.add_argument("--exclude-existing", metavar="DIR", default=None,
+                    help="skip HISTORY download for sensors already present under "
+                         "DIR/pm25/<group>/ (matched by leading sensor-id in the "
+                         "filename). SUPPLEMENT mode: spend points only on NEW "
+                         "sensors, never re-pull ones we already own. The coords "
+                         "file is still written with the full box list (the union).")
     a = ap.parse_args()
     group = a.group
 
     if not a.api_key:
         sys.exit("No API key. Set PURPLEAIR_API_KEY or pass --api-key.")
+
+    # optional box override (default is the module-level SLC BBOX). fetch_sensor_list
+    # reads the global BBOX, so rebind it here.
+    if a.bbox:
+        try:
+            nwlat, nwlng, selat, selng = (float(v) for v in a.bbox.split(","))
+        except ValueError:
+            sys.exit(f"--bbox must be 4 comma-separated floats, got {a.bbox!r}")
+        global BBOX
+        BBOX = dict(nwlat=nwlat, nwlng=nwlng, selat=selat, selng=selng)
 
     out_dir = Path(a.out)
     start_dt = datetime.strptime(a.start, "%Y-%m-%d").replace(tzinfo=timezone.utc)
@@ -298,15 +327,37 @@ def main() -> None:
         print("[done] --list-only: coords written, history skipped.")
         return
 
+    fields = ["pm2.5_atm"]
+    if a.extra_fields:
+        fields += ["pm2.5_cf_1", "humidity"]
+
+    # SUPPLEMENT mode: build the set of sensor ids we already have history for, so we
+    # download ONLY the new ones (never re-spend points on data we own).
+    existing_ids: set[int] = set()
+    if a.exclude_existing:
+        ex_dir = Path(a.exclude_existing) / "pm25" / group
+        for f in ex_dir.glob("*.csv"):
+            head = f.name.split(" ", 1)[0]
+            if head.isdigit():
+                existing_ids.add(int(head))
+        print(f"[exclude] {len(existing_ids)} sensors already in {ex_dir} "
+              f"-> history skipped for them")
+
     pm_dir = out_dir / "pm25" / group
     total_rows = 0
+    n_new = n_skip = 0
     for n, s in enumerate(sensors, 1):
-        rows = fetch_history(s["id"], start_dt, end_dt, a.api_key)
-        got = write_history_csv(s["id"], rows, a.start, a.end, pm_dir)
+        if s["id"] in existing_ids:
+            n_skip += 1
+            continue
+        rows = fetch_history(s["id"], start_dt, end_dt, a.api_key, fields)
+        got = write_history_csv(s["id"], rows, a.start, a.end, pm_dir, fields)
         total_rows += got
+        n_new += 1
         print(f"  [{n}/{len(sensors)}] sensor {s['id']:>10}  "
-              f"{got:>5} hourly rows")
-    print(f"[done] {len(sensors)} sensors, {total_rows} rows -> {pm_dir}")
+              f"{got:>5} hourly rows  (NEW)")
+    print(f"[done] downloaded {n_new} NEW sensors ({n_skip} skipped as existing), "
+          f"{total_rows} rows -> {pm_dir}")
 
 
 if __name__ == "__main__":

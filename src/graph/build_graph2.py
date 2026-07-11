@@ -114,6 +114,36 @@ CITY_CONFIG = {
             ),
         },
     ),
+    "pittsburgh": dict(
+        coords_file=DATA_DIR / "pittsburgh" / "coords" / "pittsburgh_loc_elev.txt",
+        utm_crs="EPSG:32617",          # UTM zone 17N (Pittsburgh, PA)
+        groups={
+            "urban": dict(
+                purple_air_dir=DATA_DIR / "pittsburgh" / "pm25",
+                wind_zip=DATA_DIR / "pittsburgh" / "uwind_pittsburgh.zip.zip",
+                wind_dir=DATA_DIR / "pittsburgh" / "wind" / "pittsburgh",
+                # HRRR 3 km 10 m wind sampled at each sensor (scripts/
+                # fetch_wind_hrrr.py), same sensor_<id>.csv schema as ERA5. Unlike
+                # ERA5 (~30 km = one vector city-wide), HRRR resolves terrain-
+                # channeled flow, so its spatial DIVERGENCE carries real PM signal
+                # (corr -0.119) -- the input the convection module actually needs.
+                # Select at train time with WIND_SOURCE="hrrr" / --wind hrrr.
+                wind_hrrr_dir=DATA_DIR / "pittsburgh" / "wind_hrrr",
+                # surface temperature for the temperature gate. one CSV per
+                # sensor (<id>_temperature.csv, hourly), extracted from the zip.
+                # Pittsburgh is the only city with temperature so far; the others
+                # omit these keys -> load_temperature returns have_temp=False.
+                temp_zip=DATA_DIR / "pittsburgh" / "temperature_csvs.zip",
+                temp_dir=DATA_DIR / "pittsburgh" / "temperature",
+                # MAIAC (MCD19A2) 1 km AOD sampled at each sensor by
+                # scripts/fetch_aod.py -> one city CSV, sub-daily + gappy. Unlike
+                # ERA5 temp/wind, AOD varies in space (1 km over a ~13 km net), so
+                # it's a real spatial covariate for the never-masked AOD feature.
+                aod_csv=DATA_DIR / "pittsburgh" / "aod"
+                / "aod_points_2023-01-01_2023-12-31.csv",
+            ),
+        },
+    ),
     "slc": dict(
         coords_file=DATA_DIR / "slc" / "coords" / "sensor_lat_long_alt",
         utm_crs="EPSG:32612",          # UTM zone 12N (Salt Lake Valley, UT)
@@ -123,6 +153,40 @@ CITY_CONFIG = {
                 # no wind data yet: these paths don't exist, load_wind zero-fills.
                 wind_zip=DATA_DIR / "slc" / "wind" / "none.zip",
                 wind_dir=DATA_DIR / "slc" / "wind" / "urban",
+            ),
+        },
+    ),
+    # Fresno, CA -- GraPhy's own benchmark city (41 sensors, Oct 2023-Jan 2024).
+    # We reproduce their setup here to check our base interpolator matches their
+    # reported MAE 2.38 ug/m3 under the same inductive protocol. Wind is HRRR
+    # (Open-Meteo) sampled per sensor; ERA5 path is left unset (load_wind falls
+    # back to zero-fill if the hrrr dir is chosen via WIND_SOURCE).
+    "fresno": dict(
+        coords_file=DATA_DIR / "fresno" / "coords" / "sensor_lat_long_alt",
+        utm_crs="EPSG:32611",          # UTM zone 11N (Central California)
+        groups={
+            "urban": dict(
+                purple_air_dir=DATA_DIR / "fresno" / "pm25" / "urban",
+                wind_zip=DATA_DIR / "fresno" / "wind" / "none.zip",
+                wind_dir=DATA_DIR / "fresno" / "wind" / "urban",
+                wind_hrrr_dir=DATA_DIR / "fresno" / "wind_hrrr",
+            ),
+        },
+    ),
+    # DENSITY-MATCHED Fresno: wider Fresno-Clovis bbox fetch (43 usable sensors, no
+    # spacing thinning) to match GraPhy's 41-node network and close the ~1.8x gap to
+    # their MAE 2.38 (the residual gap was network density). Same Oct'23-Jan'24 window.
+    # No per-sensor wind for this new set -> zero-fill; fine because the winning config
+    # runs --no-convection (wind feeds only the convection module). EPA extra-fields
+    # fetched, so EPA_CORRECT works.
+    "fresno_dense": dict(
+        coords_file=DATA_DIR / "fresno_dense" / "coords" / "sensor_lat_long_alt",
+        utm_crs="EPSG:32611",          # UTM zone 11N (Central California)
+        groups={
+            "urban": dict(
+                purple_air_dir=DATA_DIR / "fresno_dense" / "pm25" / "urban",
+                wind_zip=DATA_DIR / "fresno_dense" / "wind" / "none.zip",
+                wind_dir=DATA_DIR / "fresno_dense" / "wind" / "urban",
             ),
         },
     ),
@@ -174,7 +238,27 @@ def parse_sensor_coords(path: Path) -> pd.DataFrame:
     bracket-count from the next "[" to its matching "]" to grab that group's
     full literal list (ast.literal_eval handles the actual parsing).
     """
-    lines = path.read_text().splitlines()
+    text = path.read_text()
+
+    # Pittsburgh variant: a single JSON-ish `"data" : [ [id, lat, lon, alt], ... ]`
+    # block (no group headers). The generic line-scanner below can't handle it
+    # because the array's opening "[" shares the skipped `"data"` line, so we
+    # peel that one array out explicitly and treat every sensor as one group.
+    if '"data"' in text:
+        arr = text[text.index("[", text.index('"data"')):]
+        records = ast.literal_eval(arr.rstrip().rstrip("}").strip())
+        return pd.DataFrame([
+            {
+                "station_id": str(int(sensor_id)),
+                "lat": float(lat),
+                "lon": float(lon),
+                "elevation": alt_ft * FEET_TO_M,   # -> metres
+                "group": "urban",
+            }
+            for sensor_id, lat, lon, alt_ft in records
+        ])
+
+    lines = text.splitlines()
     rows = []
     pending_name = None
     i = 0
@@ -211,6 +295,23 @@ def parse_sensor_coords(path: Path) -> pd.DataFrame:
 # ===========================================================================
 # 3. AIR QUALITY - hourly PurpleAir CSVs -> tidy table -> wide [time x node]
 # ===========================================================================
+# EPA / Barkjohn (2021) US-wide PurpleAir correction. Raw PurpleAir over-reads
+# PM2.5 by ~40% and is humidity-sensitive; the EPA-accepted fix is a linear model
+# on the cf_1 channel + relative humidity:
+#     PM2.5_corrected = 0.524 * pm2.5_cf_1 - 0.0862 * humidity + 5.75
+# Papers that benchmark on PurpleAir (incl. GraPhy's Fresno) use corrected data, so
+# raw pm2.5_atm inflates our absolute MAE vs their 2.38. Turn on with EPA_CORRECT
+# (needs the cf_1 + humidity columns, which scripts/fetch_purpleair.py --extra-fields
+# writes). Falls back to raw pm2.5_atm when the columns are absent.
+EPA_CORRECT = False
+
+
+def _epa_correct(df: pd.DataFrame) -> pd.Series:
+    cf1 = pd.to_numeric(df["pm2.5_cf_1"], errors="coerce")
+    rh = pd.to_numeric(df["humidity"], errors="coerce")
+    return (0.524 * cf1 - 0.0862 * rh + 5.75).clip(lower=0)
+
+
 def load_air_quality(purple_air_dir: Path, station_ids: list[str]) -> pd.DataFrame:
     """Read every non-empty PurpleAir CSV. The station id is the filename's
     leading digits (filenames look like "120859 2023-01-01 ... .csv"), so
@@ -224,14 +325,23 @@ def load_air_quality(purple_air_dir: Path, station_ids: list[str]) -> pd.DataFra
         if not m or m.group(1) not in wanted:
             continue
         station_id = m.group(1)
-        df = pd.read_csv(csv_path)
+        try:
+            df = pd.read_csv(csv_path)
+        except pd.errors.EmptyDataError:
+            continue  # zero-byte / header-less file (some sensors export nothing)
         if df.empty or "pm2.5_atm" not in df.columns:
             continue  # several sensors returned no data in range
+        # EPA-corrected PM2.5 when requested AND the cf_1+humidity columns exist;
+        # otherwise the raw ATM channel (unchanged default behaviour).
+        if EPA_CORRECT and {"pm2.5_cf_1", "humidity"}.issubset(df.columns):
+            pm = _epa_correct(df)
+        else:
+            pm = pd.to_numeric(df["pm2.5_atm"], errors="coerce")
         rows.append(pd.DataFrame({
             "station_id": station_id,
             # tz-aware timestamp -> UTC so all sensors share one timeline
             "timestamp": pd.to_datetime(df["time_stamp"], utc=True),
-            "pm25": pd.to_numeric(df["pm2.5_atm"], errors="coerce"),
+            "pm25": pm,
         }))
     if not rows:
         raise FileNotFoundError(
@@ -287,6 +397,105 @@ def load_wind(wind_zip: Path, wind_dir: Path, station_ids: list[str],
     u10 = pd.DataFrame(u10_cols, index=target_index)[station_ids]
     v10 = pd.DataFrame(v10_cols, index=target_index)[station_ids]
     return u10.fillna(0.0), v10.fillna(0.0), bool(have_wind)
+
+
+# ===========================================================================
+# 4b. TEMPERATURE - hourly per-sensor °C CSVs -> wide [time x station]
+#     surface temperature drives the per-node temperature gate (see
+#     src/model/temperature.py). loaded LIVE like wind (not in the processed
+#     cache); cities without temperature (no temp_dir/temp_zip in their config)
+#     get an all-NaN table + have_temp=False, so the gate stays inert.
+# ===========================================================================
+def load_temperature(temp_zip: Path, temp_dir: Path, station_ids: list[str],
+                     target_index: pd.DatetimeIndex):
+    """Return (temp_wide, have_temp): wide DataFrame [time x station] in °C.
+
+    Each sensor's file is `<id>_temperature.csv` with columns datetime,
+    temperature_C, already HOURLY (the AQ grid), so it only needs reindexing
+    onto `target_index` with a light time-interpolation over any short gaps.
+    Missing sensors -> NaN column; no temperature at all -> have_temp=False.
+    """
+    if temp_dir is None:
+        return pd.DataFrame(index=target_index, columns=station_ids, dtype=float), False
+    if not temp_dir.exists() and temp_zip is not None and temp_zip.exists():
+        print(f"[temp] extracting {temp_zip.name} -> {temp_dir}")
+        with zipfile.ZipFile(temp_zip) as zf:
+            zf.extractall(temp_dir.parent)
+
+    cols = {}
+    have_temp = []
+    for sid in station_ids:
+        csv_path = temp_dir / f"{sid}_temperature.csv"
+        if not csv_path.exists():
+            cols[sid] = pd.Series(dtype=float)
+            continue
+        df = pd.read_csv(csv_path, parse_dates=["datetime"])
+        df = df.set_index(pd.DatetimeIndex(df["datetime"]).tz_localize("UTC")).sort_index()
+        have_temp.append(sid)
+        # union index so a time-interpolation has native points, then reindex
+        # down to just the hourly AQ timestamps we actually need.
+        full_index = df.index.union(target_index)
+        interp = df.reindex(full_index)["temperature_C"].interpolate(method="time")
+        cols[sid] = interp.reindex(target_index)
+
+    if not have_temp:
+        print(f"[temp] no temperature files under {temp_dir} -> temperature gate "
+              f"will be inert")
+    elif len(have_temp) < len(station_ids):
+        missing = sorted(set(station_ids) - set(have_temp))
+        print(f"[temp] {len(missing)}/{len(station_ids)} sensors missing "
+              f"temperature -> NaN (filled from the field mean): {missing}")
+
+    temp_wide = pd.DataFrame(cols, index=target_index)[station_ids]
+    return temp_wide, bool(have_temp)
+
+
+# ===========================================================================
+# 4c. AOD - MODIS/MAIAC MCD19A2 1 km column aerosol sampled at sensor points.
+#     ONE city CSV (scripts/fetch_aod.py), sub-daily + gappy: ~1-3 satellite
+#     overpasses/day, dropping out under cloud. Feeds the never-masked AOD node
+#     feature (train.py). Unlike ERA5 temp/wind this genuinely varies in space,
+#     so it can discriminate an unmonitored location. Cities without an aod_csv
+#     get an all-NaN table + have_aod=False (feature stays neutral).
+# ===========================================================================
+def load_aod(aod_csv: Path, station_ids: list[str],
+             target_index: pd.DatetimeIndex):
+    """Return (aod_wide, has_aod): wide DataFrame [time x station] of AOD@550nm.
+
+    Collapse the multiple daily orbits to a per-day mean per sensor, then
+    broadcast each day's value onto the hourly `target_index` (AOD is a daily
+    covariate, not hourly). Days with no cloud-free retrieval stay NaN -> the
+    model fills them from the field mean, so the feature is simply neutral there.
+    """
+    empty = pd.DataFrame(index=target_index, columns=station_ids, dtype=float)
+    if aod_csv is None or not Path(aod_csv).exists():
+        print(f"[aod] no AOD file ({aod_csv}) -> AOD feature will be inert")
+        return empty, False
+
+    df = pd.read_csv(aod_csv, parse_dates=["datetime"])
+    if df.empty or "aod_055" not in df.columns:
+        print(f"[aod] {Path(aod_csv).name} empty/malformed -> AOD feature inert")
+        return empty, False
+
+    df["id"] = df["id"].astype(str)
+    df = df[df["id"].isin(station_ids)]
+    ts = pd.DatetimeIndex(df["datetime"])
+    ts = ts.tz_localize("UTC") if ts.tz is None else ts.tz_convert("UTC")
+    df = df.assign(day=ts.floor("D"))
+
+    # sub-daily orbits -> one value per (day, sensor); NaN days left absent.
+    daily = df.groupby(["day", "id"])["aod_055"].mean().unstack("id")
+    # broadcast day -> every hour of that day on the AQ timeline.
+    aod_wide = daily.reindex(target_index.floor("D"))
+    aod_wide.index = target_index
+    aod_wide = aod_wide.reindex(columns=station_ids)
+
+    n_have = int(daily.notna().any(axis=0).sum())
+    cover = float(daily.notna().to_numpy().mean()) if daily.size else 0.0
+    print(f"[aod] {Path(aod_csv).name}: {daily.shape[0]} days, "
+          f"{n_have}/{len(station_ids)} sensors with data, "
+          f"{cover * 100:.0f}% of day-cells have a retrieval")
+    return aod_wide, n_have > 0
 
 
 # ===========================================================================

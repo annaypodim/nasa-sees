@@ -31,49 +31,79 @@ from src.model.convection import ConvectionModule
 from src.model.local import LocalModule
 from src.model.fusion import Fusion
 from src.model.elevation import ElevationGate
+from src.model.temperature import TemperatureGate
 
 
 class GraPhyLayer(nn.Module):
     """one message-passing layer: three modules -> fuse -> residual.
 
-    elevation is a MODULATOR, not a fourth module: one shared ElevationGate turns
-    each edge's signed Δheight into a scalar that dampens BOTH transport terms --
-    it scales diffusion's edge weight and convection's message. local (a purely
-    node-local source/sink term) is left ungated. see elevation.py.
+    two MODULATORS, not extra modules:
+      * ElevationGate  -- per-EDGE scalar from signed Δheight; dampens BOTH
+        transports via diffusion's edge weight and convection's message.
+      * TemperatureGate -- per-NODE scalar from surface temperature; scales BOTH
+        transports' contributions at the destination node (cold/inversion < 1
+        traps, hot/convective > 1 enhances).
+    local (a node source/sink) and the outer residual stay ungated. see
+    elevation.py and temperature.py.
     """
-    def __init__(self, dim: int, edge_in: int):
+    def __init__(self, dim: int, edge_in: int, use_convection: bool = True,
+                 use_local: bool = True):
         super().__init__()
+        # MODULE TOGGLES (added 2026-07-09 for ablations): diffusion is always on
+        # (it is the interpolation core); convection/local can be switched off to
+        # isolate what actually helps vs the IDW baseline. Disabled modules are not
+        # even constructed, so no dead parameters. Fusion sizes to the active count.
+        self.use_convection = use_convection
+        self.use_local = use_local
         self.diffusion  = DiffusionModule(dim, dim)
-        self.convection = ConvectionModule(dim, edge_in, dim)
-        self.local      = LocalModule(dim, dim)
-        self.fusion     = Fusion(dim)
+        self.convection = ConvectionModule(dim, edge_in, dim) if use_convection else None
+        self.local      = LocalModule(dim, dim) if use_local else None
+        n_modules = 1 + int(use_convection) + int(use_local)
+        self.fusion     = Fusion(dim, n_modules=n_modules)
         self.elev_gate  = ElevationGate()   # shared height scale for both transport terms
+        self.temp_gate  = TemperatureGate()  # per-node mixing scale for both transports
 
-    def forward(self, h, edge_index, edge_weight, edge_attr, edge_delev=None):
+    def forward(self, h, edge_index, edge_weight, edge_attr, edge_delev=None,
+                node_temp=None):
         gate = None if edge_delev is None else self.elev_gate(edge_delev)   # [E]
-        # diffusion reads the gate through the edge weight; convection through the message
+        # diffusion reads the elevation gate through the edge weight; convection through the message
         diff_weight = edge_weight if gate is None else edge_weight * gate
         d = self.diffusion(h, edge_index, diff_weight)
-        c = self.convection(h, edge_index, edge_attr, edge_gate=gate)
-        l = self.local(h, edge_index, edge_weight)   # local source/sink: ungated
-        fused, _ = self.fusion(l, d, c)   # returns (blend, weights); we want the blend
+        # TEMPERATURE gate: per-node, scales each transport's contribution at the
+        # destination node (None -> inert). local + the outer residual are ungated.
+        tg = None if node_temp is None else self.temp_gate(node_temp)[:, None]  # [N, 1]
+        if tg is not None:
+            d = d * tg
+        # active-module list, fixed order [diffusion, (convection), (local)]
+        active = [d]
+        if self.convection is not None:
+            c = self.convection(h, edge_index, edge_attr, edge_gate=gate)
+            if tg is not None:
+                c = c * tg
+            active.append(c)
+        if self.local is not None:
+            active.append(self.local(h, edge_index, edge_weight))  # local: ungated
+        fused, _ = self.fusion(*active)   # returns (blend, weights); we want the blend
         return h + fused   # RESIDUAL: nudge, don't overwrite -> no oversmoothing
 
 
 class GraPhyNet(nn.Module):
     """encode PM2.5 -> stack a few layers -> predict PM2.5 back."""
-    def __init__(self, node_in: int, edge_in: int, hidden: int = 8, layers: int = 3):
+    def __init__(self, node_in: int, edge_in: int, hidden: int = 8, layers: int = 3,
+                 use_convection: bool = True, use_local: bool = True):
         super().__init__()
         self.encoder = nn.Linear(node_in, hidden)         # raw PM2.5 -> width H
         self.layers  = nn.ModuleList(
-            GraPhyLayer(hidden, edge_in) for _ in range(layers)
+            GraPhyLayer(hidden, edge_in, use_convection, use_local)
+            for _ in range(layers)
         )
         self.head = nn.Linear(hidden, 1)                  # width H -> one PM2.5 value
 
-    def forward(self, x, edge_index, edge_weight, edge_attr, edge_delev=None):
+    def forward(self, x, edge_index, edge_weight, edge_attr, edge_delev=None,
+                node_temp=None):
         h = self.encoder(x)
         for layer in self.layers:
-            h = layer(h, edge_index, edge_weight, edge_attr, edge_delev)
+            h = layer(h, edge_index, edge_weight, edge_attr, edge_delev, node_temp)
         return self.head(h)   # [N, 1] predicted PM2.5 at every node
 
 

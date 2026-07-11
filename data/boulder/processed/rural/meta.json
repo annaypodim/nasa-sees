@@ -1,0 +1,32 @@
+{
+  "city": "boulder",
+  "sensor_set": "rural",
+  "generated_at": "2026-07-08T20:43:35+00:00",
+  "n_timesteps": 8736,
+  "n_nodes": 14,
+  "kept_ids": [
+    "100287",
+    "101027",
+    "102866",
+    "113068",
+    "113084",
+    "119677",
+    "136348",
+    "171409",
+    "55935",
+    "60731",
+    "69943",
+    "81953",
+    "87247",
+    "91953"
+  ],
+  "dropped_ids": [],
+  "coverage_threshold": 0.4,
+  "plausible_range_ug": [
+    0.0,
+    500.0
+  ],
+  "fill_method": "zero",
+  "observed_cells": 112819,
+  "raw_sensors": 14
+}
