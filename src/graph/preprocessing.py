@@ -81,6 +81,31 @@ DESPIKE_K = 6.0         # robust-z threshold; higher = more conservative
 DESPIKE_MIN_SIGMA = 1.0  # ug/m3 floor on robust_sigma so a flat clean stretch
 #                          (MAD~0) doesn't flag ordinary small wiggles as spikes
 
+# FLATLINE / STUCK-SENSOR detection.  A PurpleAir laser that jams reports the
+# EXACT same value for hours on end -- physically impossible for real ambient
+# PM2.5, which always jitters.  We flag any run of >= FLATLINE_MIN_RUN identical
+# consecutive NONZERO readings (zero is excluded: clean-air periods legitimately
+# read 0.0 for long stretches, and 0 is also the input fill value).  Flagged
+# cells become NOT observed, exactly like an implausible/spike cell; a sensor
+# that is stuck for most of the record then loses coverage and self-prunes.
+# Temporal despike does NOT catch this (a flat run has MAD~0 -> nothing deviates).
+# OFF by default; eval flips it on with --flatline.
+FLATLINE = False
+FLATLINE_MIN_RUN = 24    # >= this many identical consecutive hours = stuck
+
+# SPATIAL-OUTLIER rejection (cross-sensor, per hour).  Temporal despike only sees
+# each sensor in isolation, so a fault lasting SEVERAL hours (which drags the
+# per-sensor rolling median with it) survives.  Here we compare every reading to
+# the rest of the NETWORK at the same hour: robust-z = |x - median_hour| /
+# (1.4826*MAD_hour), flag cells > SPATIAL_K.  Deliberately CONSERVATIVE (high K)
+# so genuine local hotspots -- which move only a few sensors a moderate amount --
+# survive; only a reading grossly inconsistent with the whole field at that hour
+# (a lone 200 while everyone reads 15) is removed.  OFF by default; --spatial-qa.
+SPATIAL_QA = False
+SPATIAL_K = 8.0          # cross-sensor robust-z threshold (conservative)
+SPATIAL_MIN_SIGMA = 2.0  # ug/m3 floor on the hourly robust scale
+SPATIAL_MIN_SENSORS = 6  # need this many readings that hour for a stable center
+
 
 # ---------------------------------------------------------------------------
 # 0. mask physically-implausible readings
@@ -124,6 +149,53 @@ def despike(pm_wide: pd.DataFrame,
     mad = absdev.rolling(window, center=True, min_periods=minp).median()
     robust_sigma = (1.4826 * mad).clip(lower=min_sigma)
     bad = (absdev > k * robust_sigma) & pm_wide.notna()
+    n_masked = int(bad.to_numpy().sum())
+    return pm_wide.mask(bad), n_masked
+
+
+# ---------------------------------------------------------------------------
+# 0c. flatline / stuck-sensor detection (per-sensor identical-run removal)
+# ---------------------------------------------------------------------------
+def mask_flatline(pm_wide: pd.DataFrame, min_run: int = FLATLINE_MIN_RUN):
+    """Flag runs of >= min_run identical consecutive NONZERO readings as NaN.
+
+    Returns (cleaned_wide, n_masked). Real ambient PM2.5 always jitters, so a long
+    exactly-constant nonzero run is a jammed laser. Per column we label maximal
+    runs of equal consecutive values (NaN or any change starts a new run) and mask
+    non-zero runs at/over min_run. Zero is excluded (clean air legitimately reads
+    0.0 for long stretches, and 0 is the fill value).
+    """
+    bad = pd.DataFrame(False, index=pm_wide.index, columns=pm_wide.columns)
+    for col in pm_wide.columns:
+        s = pm_wide[col]
+        same_as_prev = s.eq(s.shift())          # NaN.eq(*) -> False, so NaN breaks runs
+        run_id = (~same_as_prev).cumsum()        # constant across a maximal equal run
+        run_len = s.groupby(run_id).transform("size")
+        bad[col] = s.notna() & (s != 0) & (run_len >= min_run)
+    n_masked = int(bad.to_numpy().sum())
+    return pm_wide.mask(bad), n_masked
+
+
+# ---------------------------------------------------------------------------
+# 0d. spatial-outlier rejection (cross-sensor, per hour)
+# ---------------------------------------------------------------------------
+def mask_spatial_outliers(pm_wide: pd.DataFrame, k: float = SPATIAL_K,
+                          min_sigma: float = SPATIAL_MIN_SIGMA,
+                          min_sensors: int = SPATIAL_MIN_SENSORS):
+    """Flag readings grossly inconsistent with the network at the same hour.
+
+    Returns (cleaned_wide, n_masked). Per ROW (hour): robust-z = |x - median| /
+    max(1.4826*MAD, min_sigma) across the sensors reporting that hour; cells with
+    robust-z > k are masked. Rows with < min_sensors readings are skipped (too few
+    for a stable center). Conservative K keeps real local hotspots; only whole-field
+    outliers a temporal filter can't see (multi-hour single-sensor faults) are cut.
+    """
+    med = pm_wide.median(axis=1)
+    mad = (pm_wide.sub(med, axis=0)).abs().median(axis=1)
+    robust_sigma = (1.4826 * mad).clip(lower=min_sigma)
+    z = pm_wide.sub(med, axis=0).abs().div(robust_sigma, axis=0)
+    enough = pm_wide.notna().sum(axis=1) >= min_sensors
+    bad = z.gt(k, axis=0) & pm_wide.notna() & enough.to_numpy()[:, None]
     n_masked = int(bad.to_numpy().sum())
     return pm_wide.mask(bad), n_masked
 
@@ -191,14 +263,26 @@ def preprocess(pm_wide: pd.DataFrame,
     """
     lo, hi = plausible_range
     clean_wide, n_masked = mask_implausible(pm_wide, lo, hi)
+    cells = pm_wide.size
     n_spikes = 0
     if DESPIKE:
         clean_wide, n_spikes = despike(clean_wide)
         if verbose:
-            cells = pm_wide.size
             print(f"[preprocess] despike: masked {n_spikes}/{cells} spike cells "
                   f"({n_spikes / cells:.2%}) > {DESPIKE_K:g} robust-sigma from a "
                   f"{DESPIKE_WINDOW}h rolling median -> treated as not observed")
+    if FLATLINE:
+        clean_wide, n_flat = mask_flatline(clean_wide)
+        if verbose:
+            print(f"[preprocess] flatline: masked {n_flat}/{cells} stuck cells "
+                  f"({n_flat / cells:.2%}) in runs >= {FLATLINE_MIN_RUN}h of an "
+                  f"identical nonzero value -> not observed")
+    if SPATIAL_QA:
+        clean_wide, n_sp = mask_spatial_outliers(clean_wide)
+        if verbose:
+            print(f"[preprocess] spatial-qa: masked {n_sp}/{cells} cells "
+                  f"({n_sp / cells:.2%}) > {SPATIAL_K:g} cross-sensor robust-z from "
+                  f"the hourly network median -> not observed")
     kept_wide, dropped = drop_dud_sensors(clean_wide, threshold)
     observed = observed_mask(kept_wide)
     filled = fill_missing(kept_wide, fill_method)

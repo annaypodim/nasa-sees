@@ -581,3 +581,35 @@ direction (long-gap filling + terrain), which is where "strong AND novel" lives.
   NEXT LEVER = fetch HRRR wind (NOAA, FREE, not PurpleAir points) for the dense set +
   re-enable convection, and see if physics-based transport beats IDW where the residual
   cannot. New file: run_dense_model.sh. All UNCOMMITTED.
+
+  --- CONVECTION TEST on data/fresno (REAL HRRR wind, 18 usable) run_convection_fresno.sh ---
+  User: get convection contributing; likely helps MAE. Convection lives INSIDE the
+  corr-reg-suppressed residual + competes via softmax; it encodes DIRECTIONAL transport
+  IDW can't -> gave it every chance: fixed 1/d prior, real wind (has_wind=True), and
+  LOOSENED the leash so it could speak. Sweep (8 seeds, IDW baseline 4.159):
+    off_06 no-conv cr0.6 (control) 4.130   <- BEST
+    on_06  conv    cr0.6           4.181   (+0.05 vs control)
+    on_03  conv    cr0.3           4.296   (+0.17)
+    on_01  conv    cr0.1           4.478   (+0.35)
+    off_03 no-conv cr0.3           4.247   (+0.12)  <- looser reg hurts even w/o conv
+  CONVECTION HURTS at every leash; loosening the correction monotonically WORSENS MAE
+  WITH or WITHOUT convection -> the residual is noise, convection included. 2nd
+  independent confirmation (after the dense diagnostic).
+  ROOT CAUSE (mechanistic, measured): the HRRR wind is COMMON-MODE across the compact
+  urban network -- cross-sensor std of u/v = 0.31/0.30 m/s vs 1.75 m/s mean (17.5%
+  variation), wind-DIRECTION circular std just 17.9 deg across all 33 sensors. The same
+  wind vector blows over every sensor, so wind_along = speed*cos(dir - bearing) varies
+  edge-to-edge ONLY through geometry, not spatial wind structure. No differential
+  advection to learn -> convection can add only a weak global directional bias = noise.
+  Same class as the earlier "reanalysis covariates are common-mode dead ends" finding.
+  CONVECTION IS NOT BROKEN -- it has nothing to bite on where wind is spatially uniform.
+  IT WOULD HELP where wind VARIES across the net: TERRAIN-CHANNELED valley/canyon flow.
+  CHECKED Pittsburgh (river valleys, 95 wind sensors on disk): wind is ALSO common-mode,
+  even MORE than Fresno -- 13.7% of mean, 15.2 deg direction std. GENERAL ROOT CAUSE:
+  HRRR is a 3 KM reanalysis grid; cities span ~10-30 km with ~1-3 km sensor spacing, so
+  HRRR cannot resolve sub-grid wind -> every sensor gets ~the same interpolated vector.
+  => With HRRR wind, convection CANNOT contribute at intra-city scale in ANY of our
+  cities (not a Fresno quirk). A real convection test would need genuinely
+  spatially-resolved wind (terrain-downscaled or per-sensor anemometer) -- not on hand.
+  Convection question CLOSED for the reanalysis-wind regime. Don't spend on a Pittsburgh
+  run; it would reconfirm the null. New file: run_convection_fresno.sh. All UNCOMMITTED.

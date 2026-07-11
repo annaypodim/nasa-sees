@@ -470,6 +470,12 @@ def main():
     ap.add_argument("--despike", action="store_true",
                     help="temporal MAD despike of the raw PM series in preprocessing "
                          "(isolated single-hour spikes -> not observed). Data QA.")
+    ap.add_argument("--flatline", action="store_true",
+                    help="mask stuck-sensor runs (>=24h identical nonzero) -> not "
+                         "observed. Data QA (catches jammed lasers despike misses).")
+    ap.add_argument("--spatial-qa", action="store_true",
+                    help="mask per-hour cross-sensor gross outliers (robust-z vs the "
+                         "network median) -> not observed. Data QA (multi-hour faults).")
     ap.add_argument("--learn-bw", action="store_true",
                     help="learnable Gaussian prior kernel exp(-d/bw) instead of fixed "
                          "1/d; bw (spatial correlation length) trained jointly")
@@ -497,6 +503,8 @@ def main():
     bg.SENSOR_SET = args.sensor_set
     bg.EPA_CORRECT = args.epa_correct
     pp.DESPIKE = args.despike
+    pp.FLATLINE = args.flatline
+    pp.SPATIAL_QA = args.spatial_qa
     if args.knn is not None:
         bg.K = args.knn
     tr.WIND_SOURCE = args.wind
