@@ -61,6 +61,26 @@ PLAUSIBLE_MAX_UG = 500.0
 # choice only affects the forward pass, never the loss.
 FILL_METHOD = "zero"
 
+# TEMPORAL DESPIKE (robust MAD outlier removal).  Raw PurpleAir series carry
+# isolated single-hour noise spikes / dropouts that survive the coarse [0,500]
+# plausibility clip but still corrupt supervision and inflate LINEAR MAE (a lone
+# 300 ug/m3 blip is a big absolute error at eval and a bad training target).
+# GraPhy's benchmark uses QA'd data; this is the QA we can apply to our own bytes
+# without any new fetch.  For each sensor we compare every reading to a CENTRED
+# per-sensor rolling median and flag cells whose deviation exceeds DESPIKE_K
+# robust-sigma (MAD-based, robust_sigma = 1.4826*MAD).  A cell flagged as a spike
+# is set NOT observed (never an input, never a target) -- identical treatment to
+# an implausible reading.  Conservative by design: a REAL multi-hour pollution
+# episode drags the rolling median up WITH it, so its readings stay within K
+# robust-sigma and survive; only short isolated excursions relative to the local
+# level are removed.  OFF by default so existing pipelines are unchanged; the
+# eval driver flips DESPIKE on via --despike.
+DESPIKE = False
+DESPIKE_WINDOW = 13     # hours, centred rolling window (odd -> symmetric)
+DESPIKE_K = 6.0         # robust-z threshold; higher = more conservative
+DESPIKE_MIN_SIGMA = 1.0  # ug/m3 floor on robust_sigma so a flat clean stretch
+#                          (MAD~0) doesn't flag ordinary small wiggles as spikes
+
 
 # ---------------------------------------------------------------------------
 # 0. mask physically-implausible readings
@@ -77,6 +97,33 @@ def mask_implausible(pm_wide: pd.DataFrame,
     NaN and are not counted.
     """
     bad = ((pm_wide < lo) | (pm_wide > hi)) & pm_wide.notna()
+    n_masked = int(bad.to_numpy().sum())
+    return pm_wide.mask(bad), n_masked
+
+
+# ---------------------------------------------------------------------------
+# 0b. temporal despike (per-sensor robust MAD outlier removal)
+# ---------------------------------------------------------------------------
+def despike(pm_wide: pd.DataFrame,
+            window: int = DESPIKE_WINDOW,
+            k: float = DESPIKE_K,
+            min_sigma: float = DESPIKE_MIN_SIGMA):
+    """Flag isolated single-hour spikes as NaN (not observed).
+
+    Returns (cleaned_wide, n_masked). Per column: robust-z = |x - rolling_median|
+    / max(1.4826*rolling_MAD, min_sigma). Cells with robust-z > k are masked. The
+    rolling median tracks genuine multi-hour episodes (they move it up with them),
+    so only short excursions relative to the LOCAL level are removed; min_sigma
+    prevents a quiet clean stretch (MAD~0) from flagging normal small variation.
+    Runs before the coverage drop, like mask_implausible, so a chronically noisy
+    sensor loses coverage and self-prunes.
+    """
+    minp = max(3, window // 2)
+    med = pm_wide.rolling(window, center=True, min_periods=minp).median()
+    absdev = (pm_wide - med).abs()
+    mad = absdev.rolling(window, center=True, min_periods=minp).median()
+    robust_sigma = (1.4826 * mad).clip(lower=min_sigma)
+    bad = (absdev > k * robust_sigma) & pm_wide.notna()
     n_masked = int(bad.to_numpy().sum())
     return pm_wide.mask(bad), n_masked
 
@@ -144,6 +191,14 @@ def preprocess(pm_wide: pd.DataFrame,
     """
     lo, hi = plausible_range
     clean_wide, n_masked = mask_implausible(pm_wide, lo, hi)
+    n_spikes = 0
+    if DESPIKE:
+        clean_wide, n_spikes = despike(clean_wide)
+        if verbose:
+            cells = pm_wide.size
+            print(f"[preprocess] despike: masked {n_spikes}/{cells} spike cells "
+                  f"({n_spikes / cells:.2%}) > {DESPIKE_K:g} robust-sigma from a "
+                  f"{DESPIKE_WINDOW}h rolling median -> treated as not observed")
     kept_wide, dropped = drop_dud_sensors(clean_wide, threshold)
     observed = observed_mask(kept_wide)
     filled = fill_missing(kept_wide, fill_method)

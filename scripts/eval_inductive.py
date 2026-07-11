@@ -39,6 +39,7 @@ import numpy as np
 import torch
 
 from src.graph import build_graph2 as bg
+from src.graph import preprocessing as pp
 from src.model import train as tr
 from src.model.model import GraPhyNet
 
@@ -156,8 +157,24 @@ def run_seed(seed, graph, args):
     # that are OBSERVED AND VISIBLE (not masked) that hour -> no target leakage.
     Wmat = None
     dmat_t = offdiag = log_bw = None
-    if args.idw_prior or args.idw_feature:
+    cov_t = None          # kriging covariance matrix exp(-d/range)  [N,N]
+    den_full = None       # per-node total IDW mass (all nodes visible) -> conf norm
+    need_prior = (args.idw_prior or args.idw_feature or args.kriging_prior
+                  or args.idw_geom_features)
+    if need_prior:
         dmat = np.hypot(x_m[:, None] - x_m[None, :], y_m[:, None] - y_m[None, :])
+        # KRIGING PRIOR (Tier-1 #2): a fitted-kernel simple-kriging BLUP replaces
+        # the 1/d IDW as the prior workhorse. In z-space the field mean is ~0 so
+        # simple kriging (no unbiasedness Lagrange term) applies:
+        #   base = C_av (C_vv + nugget I)^-1 z_vis
+        # with an exponential covariance C = exp(-d/range). Unlike IDW this
+        # accounts for the spatial COVARIANCE structure and DOWNWEIGHTS clustered
+        # (redundant) sensors, the classic reason kriging beats IDW. Solved
+        # per-timestep on the visible set (N tiny -> cheap). Range/nugget are
+        # hyperparameters (variogram scale); nugget also regularizes the solve.
+        if args.kriging_prior:
+            cov_t = torch.tensor(np.exp(-dmat / max(args.kriging_range, 1.0)),
+                                 dtype=torch.float)
         if args.learn_bw:
             # LEARNABLE kernel exp(-d/bw): bw (metres) is a trained parameter so the
             # prior adapts to the network's real spatial correlation length instead
@@ -180,19 +197,52 @@ def run_seed(seed, graph, args):
                 w = w * np.exp(-de / max(args.elev_kernel_h, 1.0))
             np.fill_diagonal(w, 0.0)
             Wmat = torch.tensor(w, dtype=torch.float)
+        if args.idw_geom_features and Wmat is not None:
+            den_full = Wmat.sum(1)                    # total IDW mass per node
 
-    def idw_base(t, visible_bool):
-        """IDW of z-space values over the visible (observed, unmasked) nodes -> [N]."""
+    use_prior = args.idw_prior or args.kriging_prior  # add the prior base to output
+
+    def _W():
+        """Current IDW weight matrix (constant unless the bandwidth is learned)."""
+        if log_bw is not None:
+            return torch.exp(-dmat_t / torch.exp(log_bw).clamp(min=1.0)) * offdiag
+        return Wmat
+
+    def kriging_base(t, visible_bool):
+        """Simple-kriging BLUP in z-space over the visible set: base = C_av C_vv^-1 z."""
+        vis_i = torch.where(visible_bool)[0]
+        if len(vis_i) == 0:
+            return torch.zeros(len(elev))
+        Cvv = cov_t[vis_i][:, vis_i].clone()
+        Cvv.diagonal().add_(args.kriging_nugget)      # nugget: noise + regularizer
+        Cav = cov_t[:, vis_i]                         # [N, n_vis]
+        wv = torch.linalg.solve(Cvv, z_t[t][vis_i])   # C_vv^-1 z_vis
+        return Cav @ wv
+
+    def prior_stats(t, visible_bool):
+        """Return (base, geom) for the visible set, both in z-space.
+          base -- prior interpolation (kriging if --kriging-prior, else IDW).
+          geom -- None, or [N,2] = (conf, disp) IDW-confidence features:
+                  conf = visible IDW mass / total mass  (low -> extrapolating into
+                         a sparse region where the prior is least trustworthy);
+                  disp = weighted std of the visible neighbour values (local
+                         heterogeneity -> where a smooth prior is most likely wrong).
+                  These tell the learned correction WHERE the prior needs fixing."""
         vis = visible_bool.float()
-        if log_bw is not None:                       # learnable Gaussian kernel
-            W = torch.exp(-dmat_t / torch.exp(log_bw).clamp(min=1.0)) * offdiag
-        elif Wmat is not None:                       # fixed 1/d kernel
-            W = Wmat
-        else:
-            return 0.0
-        num = W @ (z_t[t] * vis)
-        den = (W @ vis).clamp(min=1e-9)
-        return num / den
+        W = _W()
+        idw_val = geom = None
+        if W is not None:
+            num = W @ (z_t[t] * vis)
+            den = W @ vis
+            den_c = den.clamp(min=1e-9)
+            idw_val = num / den_c
+            if args.idw_geom_features:
+                conf = den / den_full.clamp(min=1e-9)
+                ex2 = (W @ (z_t[t].pow(2) * vis)) / den_c
+                disp = (ex2 - idw_val.pow(2)).clamp(min=0).sqrt()
+                geom = torch.stack([conf, disp], dim=1)          # [N,2]
+        base = kriging_base(t, visible_bool) if args.kriging_prior else idw_val
+        return base, geom
 
     # never-masked node feature channels. col 0 = PM2.5 (maskable). Optional extras:
     #   elev  -- DEM elevation (spatially varying, knowable anywhere)
@@ -233,7 +283,7 @@ def run_seed(seed, graph, args):
         aod_z_t = torch.tensor(az, dtype=torch.float)
 
     node_in = (1 + int(args.elev_feature) + int(args.aod_feature)
-               + int(args.idw_feature))
+               + int(args.idw_feature) + 2 * int(args.idw_geom_features))
 
     def node_features(t):
         x = z_t[t].reshape(-1, 1).clone()
@@ -256,7 +306,7 @@ def run_seed(seed, graph, args):
     # can drag held-out predictions AWAY from IDW and lose (seeds diverged this way).
     # Zero-init the head so training starts EXACTLY at IDW, and (below) penalize the
     # correction's magnitude so it stays a genuine small residual -> robustly >= IDW.
-    if args.idw_prior:
+    if use_prior:
         torch.nn.init.zeros_(model.head.weight)
         torch.nn.init.zeros_(model.head.bias)
     params = list(model.parameters())
@@ -265,8 +315,14 @@ def run_seed(seed, graph, args):
     opt = torch.optim.Adam(params, lr=args.lr)
     # Huber (smooth-L1) bounds the gradient from peak outliers -> stable in near-
     # linear target space where MSE diverges; beta is in z-units (~1 std).
-    loss_fn = (torch.nn.SmoothL1Loss(beta=args.huber_beta)
-               if args.loss == "huber" else torch.nn.MSELoss())
+    # loss on the (transformed, z-scored) target. l1 = MEDIAN regression: the
+    # MAE-optimal predictor is the conditional median, so L1 targets the reported
+    # metric directly (huber/mse target a mean-ish quantity). Now that the prior
+    # is a stable base and the correction is regularized small, L1 no longer
+    # diverges the way raw-linear MSE did.
+    loss_fn = {"huber": torch.nn.SmoothL1Loss(beta=args.huber_beta),
+               "l1": torch.nn.L1Loss(),
+               "mse": torch.nn.MSELoss()}[args.loss]
 
     train_ts = np.arange(T)
     for epoch in range(args.epochs):
@@ -287,15 +343,17 @@ def run_seed(seed, graph, args):
             visible = obs_t[t].clone()
             visible[hidden_input] = False
             visible[targets] = False
-            base = idw_base(int(t), visible)
+            base, geom = prior_stats(int(t), visible)
             if args.idw_feature:
                 x = torch.cat([x, base.reshape(-1, 1)], dim=1)   # base as a feature
+            if geom is not None:
+                x = torch.cat([x, geom], dim=1)                  # IDW-confidence feats
             out = model(x, edge_index, edge_weight, edge_attr_t[t], delev,
                         None if temp_z_t is None else temp_z_t[t])[:, 0]
-            pred = (base if args.idw_prior else 0.0) + out
+            pred = (base if use_prior else 0.0) + out
             step_loss = loss_fn(pred[targets], z_t[t][targets])
-            # keep the correction small so we can't stray far below the IDW floor
-            if args.idw_prior and args.corr_reg > 0:
+            # keep the correction small so we can't stray far below the prior floor
+            if use_prior and args.corr_reg > 0:
                 step_loss = step_loss + args.corr_reg * out[targets].pow(2).mean()
             losses.append(step_loss)
         if not losses:
@@ -306,26 +364,44 @@ def run_seed(seed, graph, args):
         opt.step()
 
     # -------- inductive eval: predict TEST sensors over every hour ----------
+    # One forward pass per hour also yields VAL-sensor predictions (val is held
+    # out identically to test), which --recal uses to fit a monotonic predicted->
+    # true map. That corrects the transform's inversion bias (predicting in sqrt/
+    # log z-space then squaring back is convex -> biased) WITHOUT touching test
+    # truth: val sensors never enter training and are disjoint from test.
     model.eval()
     trues, preds = [], []
+    val_trues, val_preds = [], []
     with torch.no_grad():
         for t in range(T):
-            if obs[t, test_idx].sum() == 0:
+            if obs[t, test_idx].sum() == 0 and obs[t, val_idx].sum() == 0:
                 continue
-            x = node_features(t)                  # test PM already masked
+            x = node_features(t)                  # test+val PM already masked
             visible = obs_t[t].clone()
             visible[hidden_input] = False          # only train sensors are visible
-            base = idw_base(t, visible)
+            base, geom = prior_stats(t, visible)
             if args.idw_feature:
                 x = torch.cat([x, base.reshape(-1, 1)], dim=1)
+            if geom is not None:
+                x = torch.cat([x, geom], dim=1)
             out = model(x, edge_index, edge_weight, edge_attr_t[t], delev,
                         None if temp_z_t is None else temp_z_t[t])[:, 0]
-            pred_z = (base if args.idw_prior else 0.0) + out
+            pred_z = (base if use_prior else 0.0) + out
             for node in test_idx:
                 if obs[t, node]:
                     trues.append(to_ug(z[t, node]))
                     preds.append(to_ug(pred_z[node].item()))
+            if args.recal:
+                for node in val_idx:
+                    if obs[t, node]:
+                        val_trues.append(to_ug(z[t, node]))
+                        val_preds.append(to_ug(pred_z[node].item()))
     trues, preds = np.array(trues), np.array(preds)
+    if args.recal and len(val_preds) > 10:
+        from sklearn.isotonic import IsotonicRegression
+        iso = IsotonicRegression(out_of_bounds="clip").fit(
+            np.array(val_preds), np.array(val_trues))
+        preds = iso.predict(preds)
     m = metrics(trues, preds)
 
     # IDW floor on the same held-out test sensors
@@ -350,8 +426,9 @@ def main():
                     help="target transform before z-scoring. sqrt (default) trains "
                          "stably near-linear; log underpredicts peaks; linear needs "
                          "huber+clip or it diverges.")
-    ap.add_argument("--loss", choices=["mse", "huber"], default="huber",
-                    help="huber (default) bounds peak-outlier gradients -> stable")
+    ap.add_argument("--loss", choices=["mse", "huber", "l1"], default="huber",
+                    help="huber (default) bounds peak-outlier gradients -> stable; "
+                         "l1 = median regression, targets MAE directly")
     ap.add_argument("--huber-beta", type=float, default=1.0,
                     help="Huber transition point in z-units (~std). default 1.0")
     ap.add_argument("--clip", type=float, default=1.0,
@@ -375,6 +452,24 @@ def main():
     ap.add_argument("--idw-feature", action="store_true",
                     help="also feed the IDW prior value as a never-masked node feature "
                          "so the correction can condition on the base it corrects")
+    ap.add_argument("--idw-geom-features", action="store_true",
+                    help="Tier1 #1: add 2 IDW-confidence node features (visible-mass "
+                         "fraction + neighbour dispersion) telling the correction WHERE "
+                         "the prior is uncertain (sparse/heterogeneous regions)")
+    ap.add_argument("--kriging-prior", action="store_true",
+                    help="Tier1 #2: replace the 1/d IDW prior with a simple-kriging "
+                         "BLUP (exp covariance) that downweights clustered sensors")
+    ap.add_argument("--kriging-range", type=float, default=3000.0,
+                    help="exponential covariance range (m) for --kriging-prior")
+    ap.add_argument("--kriging-nugget", type=float, default=0.1,
+                    help="kriging nugget (obs noise / solve regularizer), z-units^2")
+    ap.add_argument("--recal", action="store_true",
+                    help="Tier1 #3b: fit a monotonic (isotonic) predicted->true map on "
+                         "the held-out VAL sensors and apply it to test -> removes the "
+                         "transform-inversion bias. Leak-safe (val disjoint from test)")
+    ap.add_argument("--despike", action="store_true",
+                    help="temporal MAD despike of the raw PM series in preprocessing "
+                         "(isolated single-hour spikes -> not observed). Data QA.")
     ap.add_argument("--learn-bw", action="store_true",
                     help="learnable Gaussian prior kernel exp(-d/bw) instead of fixed "
                          "1/d; bw (spatial correlation length) trained jointly")
@@ -401,6 +496,7 @@ def main():
     bg.use_city(args.city)
     bg.SENSOR_SET = args.sensor_set
     bg.EPA_CORRECT = args.epa_correct
+    pp.DESPIKE = args.despike
     if args.knn is not None:
         bg.K = args.knn
     tr.WIND_SOURCE = args.wind
