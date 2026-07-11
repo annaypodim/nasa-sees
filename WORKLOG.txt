@@ -512,3 +512,72 @@ direction (long-gap filling + terrain), which is where "strong AND novel" lives.
 
   NEXT: residual 1.6x gap is now largely network density (18 vs GraPhy's 41 sensors) --
   see the BLOCKED fresno_dense fetch above (PurpleAir credits). Kriging range is tuned.
+
+================================================================================
+[2026-07-10  DENSITY-MATCHED FRESNO (supplement fetch) -- IDW now 1.42x off GraPhy,
+             but OURS LOSES to IDW on the dense net]
+  User topped up PurpleAir. SUPPLEMENT strategy (minimize credits): fetch history for
+  ONLY the sensors we don't already own. Added scripts/fetch_purpleair.py
+  --exclude-existing DIR (skips history for ids already under DIR/pm25/<grp>; coords
+  still written for the full box). Proven box 36.90,-119.92,36.60,-119.58 -> 43 usable,
+  of which 33 already owned -> fetched 10 NEW (EPA fields, Oct'23-Jan'24, no wind,
+  27894 rows). scripts/merge_fresno_dense.py unions data/fresno + data/fresno_extra ->
+  data/fresno_dense by sensor id (keeps only ids with a CSV -> never drops an existing
+  sensor). Result: 43 sensors on disk, BUT 12 of the ORIGINAL 33 CSVs are EMPTY (old
+  failed fetches) -> 31 load -> 27 kept after coverage. So usable went 18 -> 27 (+50%).
+
+  RESULT (fresno_dense, 27 usable, split 18/3/6, tuned best config, 8 seeds):
+    OURS (kriging r5000)  MAE=3.823+-.55  R2=.727      <- ~unchanged from 18-node 3.819
+    IDW baseline          MAE=3.391+-.37  R2=.784      <- was 4.159 on 18-node!
+    GraPhy (paper)        MAE=2.380
+  DENSE KRIGING-RANGE RE-TUNE (hypothesis: closer sensors -> shorter range wins):
+    range 800/1200/1800/2500/3500/5000 -> OURS 4.998/4.550/4.129/3.844/3.858/3.823
+    HYPOTHESIS WRONG: shorter is WORSE; OURS PLATEAUS ~3.82 for range>=2500. Range was
+    never the bottleneck.
+
+  FINDINGS:
+    1. DENSIFICATION IS THE ABSOLUTE-MAE LEVER: IDW 4.16 -> 3.39 (1.8x -> 1.42x off
+       GraPhy) from +9 usable sensors. Most of the gap to 2.38 was network density, as
+       hypothesized. The remaining 1.42x is GraPhy's edge OVER IDW (their learned
+       diffusion/convection), not density.
+    2. OUR GNN CORRECTION LOSES TO IDW ON THE DENSE NET (3.82 vs 3.39, loses 6/8 seeds).
+       Regime flip: the IDW-residual correction HELPED on the sparse 18-node net (gaps to
+       fill) and is DEAD WEIGHT on the dense net (IDW already near-perfect locally -> the
+       correction only adds noise). Consistent with the whole session: the correction is
+       mostly suppressed noise; density removes its job. Re-tuning range/nugget does not
+       recover it.
+    3. To beat dense IDW (-> approach 2.38) we'd need the GNN to add REAL signal a dense
+       IDW lacks -- exactly what GraPhy's learned diffusion does and our residual-kriging
+       reimpl does not. That's the open model problem, now cleanly isolated.
+
+  CREDIT NOTE: 12 of the original 33 fresno CSVs are EMPTY (failed old fetches). Re-
+  fetching those 12 (key now works) could lift usable ~27 -> ~35-39, truly matching
+  GraPhy's ~41 usable -- but will help IDW more than OURS. Pending user call (costs
+  ~12 sensors of points). New files: fetch_purpleair.py --exclude-existing,
+  scripts/merge_fresno_dense.py, run_kriging_grid_dense.sh, data/fresno_extra,
+  data/fresno_dense. All UNCOMMITTED.
+
+  --- DENSE MODEL DIAGNOSTIC (run_dense_model.sh): fix OURS, prior vs correction ---
+  User chose "fix the model, don't buy more density." Isolated WHY OURS lost:
+    config (fresno_dense, 8 seeds; IDW baseline = 3.391)            OURS MAE   R2
+    kriging-prior r5000, corr-reg 0.6  (old control)               3.823      .727
+    1/d IDW prior,       corr-reg 0.6                              3.497      .769
+    1/d IDW prior,       corr-reg 0.9  (suppress correction) BEST  3.451      .773
+    1/d IDW prior,       corr-reg 0.3  (bigger correction)         3.596      .756
+    1/d IDW prior, l6h32 corr-reg 0.6  (more capacity)            3.545      .763
+  FINDING (corrects the "loses by 0.43" above): the KRIGING PRIOR was the dense
+  handicap -- its exp-cov BLUP (range 5000) OVER-SMOOTHS the dense geometry. Swap to
+  the 1/d IDW prior (what the strong baseline uses) -> 3.823 -> 3.451, now TIED with
+  IDW 3.391 (within +-0.4 noise), no longer losing.
+  BUT the CORRECTION still adds no signal on dense: suppress it -> better (cr0.9 best),
+  enlarge it -> worse (cr0.3), add capacity -> worse (l6h32). Best case it CONVERGES to
+  IDW; it cannot BEAT it. This is a structural limit of the residual-on-IDW form, not a
+  tuning miss -- confirmed across prior/corr-reg/capacity, all pointing the same way.
+  SESSION CONCLUSION: (a) despike + 1/d IDW prior + suppressed correction is the right
+  config in BOTH regimes (kriging only helped on SPARSE; drop it on dense). (b) To BEAT
+  dense IDW (GraPhy's actual contribution) we need a mechanism that adds signal IDW
+  lacks -- GraPhy's learned CONVECTION/diffusion, which needs REAL WIND. Wind was
+  zero-filled for fresno_dense (10 new sensors have no wind) -> convection was inert.
+  NEXT LEVER = fetch HRRR wind (NOAA, FREE, not PurpleAir points) for the dense set +
+  re-enable convection, and see if physics-based transport beats IDW where the residual
+  cannot. New file: run_dense_model.sh. All UNCOMMITTED.

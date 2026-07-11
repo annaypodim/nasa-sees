@@ -278,6 +278,12 @@ def main() -> None:
     ap.add_argument("--extra-fields", action="store_true",
                     help="also fetch pm2.5_cf_1 + humidity (needed for the EPA/"
                          "Barkjohn PurpleAir correction in build_graph2.EPA_CORRECT)")
+    ap.add_argument("--exclude-existing", metavar="DIR", default=None,
+                    help="skip HISTORY download for sensors already present under "
+                         "DIR/pm25/<group>/ (matched by leading sensor-id in the "
+                         "filename). SUPPLEMENT mode: spend points only on NEW "
+                         "sensors, never re-pull ones we already own. The coords "
+                         "file is still written with the full box list (the union).")
     a = ap.parse_args()
     group = a.group
 
@@ -325,15 +331,33 @@ def main() -> None:
     if a.extra_fields:
         fields += ["pm2.5_cf_1", "humidity"]
 
+    # SUPPLEMENT mode: build the set of sensor ids we already have history for, so we
+    # download ONLY the new ones (never re-spend points on data we own).
+    existing_ids: set[int] = set()
+    if a.exclude_existing:
+        ex_dir = Path(a.exclude_existing) / "pm25" / group
+        for f in ex_dir.glob("*.csv"):
+            head = f.name.split(" ", 1)[0]
+            if head.isdigit():
+                existing_ids.add(int(head))
+        print(f"[exclude] {len(existing_ids)} sensors already in {ex_dir} "
+              f"-> history skipped for them")
+
     pm_dir = out_dir / "pm25" / group
     total_rows = 0
+    n_new = n_skip = 0
     for n, s in enumerate(sensors, 1):
+        if s["id"] in existing_ids:
+            n_skip += 1
+            continue
         rows = fetch_history(s["id"], start_dt, end_dt, a.api_key, fields)
         got = write_history_csv(s["id"], rows, a.start, a.end, pm_dir, fields)
         total_rows += got
+        n_new += 1
         print(f"  [{n}/{len(sensors)}] sensor {s['id']:>10}  "
-              f"{got:>5} hourly rows")
-    print(f"[done] {len(sensors)} sensors, {total_rows} rows -> {pm_dir}")
+              f"{got:>5} hourly rows  (NEW)")
+    print(f"[done] downloaded {n_new} NEW sensors ({n_skip} skipped as existing), "
+          f"{total_rows} rows -> {pm_dir}")
 
 
 if __name__ == "__main__":
