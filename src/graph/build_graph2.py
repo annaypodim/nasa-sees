@@ -190,6 +190,32 @@ CITY_CONFIG = {
             ),
         },
     ),
+    # fresno_dense after A/B-channel QA (scripts/apply_ab_qa.py): same set with cells/
+    # sensors whose two laser channels disagree removed. Zero-fill wind (--wind zero).
+    # _ab = strict drop (corr<0.9 OR >10% cells disagree); _abc = conservative (corr<0.9
+    # only, keeps high-corr sensors that just read noisy during high-PM hours).
+    "fresno_dense_ab": dict(
+        coords_file=DATA_DIR / "fresno_dense_ab" / "coords" / "sensor_lat_long_alt",
+        utm_crs="EPSG:32611",          # UTM zone 11N (Central California)
+        groups={
+            "urban": dict(
+                purple_air_dir=DATA_DIR / "fresno_dense_ab" / "pm25" / "urban",
+                wind_zip=DATA_DIR / "fresno_dense_ab" / "wind" / "none.zip",
+                wind_dir=DATA_DIR / "fresno_dense_ab" / "wind" / "urban",
+            ),
+        },
+    ),
+    "fresno_dense_abc": dict(
+        coords_file=DATA_DIR / "fresno_dense_abc" / "coords" / "sensor_lat_long_alt",
+        utm_crs="EPSG:32611",
+        groups={
+            "urban": dict(
+                purple_air_dir=DATA_DIR / "fresno_dense_abc" / "pm25" / "urban",
+                wind_zip=DATA_DIR / "fresno_dense_abc" / "wind" / "none.zip",
+                wind_dir=DATA_DIR / "fresno_dense_abc" / "wind" / "urban",
+            ),
+        },
+    ),
 }
 
 

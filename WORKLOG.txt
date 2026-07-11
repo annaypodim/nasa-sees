@@ -667,3 +667,34 @@ direction (long-gap filling + terrain), which is where "strong AND novel" lives.
   scratch LEARNED-ANISOTROPIC-WEIGHT interpolator (GraPhy's actual learned diffusion),
   trained pure w/ the new augmentation -- research bet, low expected payoff since IDW is
   near-optimal on dense. New files: run_ignnk.sh, eval --mask-frac-hi. All UNCOMMITTED.
+
+================================================================================
+[2026-07-11  A/B-CHANNEL QA -- BIGGEST WIN SINCE DESPIKE: IDW 3.34 -> 3.02, 1.27x off GraPhy]
+  User: "do the a/b channel, clean data matters on principle." PurpleAir has TWO laser
+  channels (pm2.5_atm_a/_b); the averaged pm2.5_atm we had hides a dead/decorrelated
+  channel. Fetched a/b for all 43 sensors (fetch_purpleair.py --ab-channels; 87301 rows
+  -> data/fresno_ab). Calibrated on a healthy sensor: corr 0.999, |A-B| median 0.7,
+  p95 1.7 ug/m3. scripts/apply_ab_qa.py: per-CELL mask where |A-B|>5 AND rel>0.5 (or a
+  channel drops out); per-SENSOR drop where corr(A,B)<0.9 (strict also drops frac_bad>10%).
+  Builds data/fresno_dense_ab (strict) / _abc (conservative); CITY_CONFIG entries added.
+  A/B FOUND REAL FAULTS: 5-7 sensors with corr -0.22..0.87 (broken channels the atm
+  average silently hid): 123359(-.22) 139384(-.21) 27111(.5) 62137(.795) 87251(.87)
+  [+111391/118085 = the empty duds].
+
+  EVAL (full QA stack despike+spatial-qa, dense-best model, 8 seeds):
+    set                 usable  OURS          IDW           off GraPhy
+    fresno_dense (base)   27    3.368+-.45   3.339+-.35    1.40x
+    fresno_dense_ab       20    3.385+-.84   3.379+-.59    worse (STRICT over-drops)
+    fresno_dense_abc      22    3.054+-.29   3.021+-.20    1.27x   <- NEW BEST
+  WIN: CONSERVATIVE A/B QA cut MAE ~9.5% (IDW 3.339->3.021, OURS 3.368->3.054) DESPITE
+  fewer sensors (27->22) -> the 5 dropped sensors were genuinely CORRUPTING (bad as both
+  neighbours and targets). Variance also collapsed (OURS std .45->.29). BIGGEST single
+  lever since despike; confirms the residual gap to GraPhy is DATA quality, not model
+  (A/B closed a big chunk toward their likely ~2.7 IDW). STRICT was worse: it discarded
+  2 GOOD high-corr sensors (63119 .962, 64483 .98) -> density loss > noise removal.
+  RULE: drop only decorrelated channels (corr<0.9); mask bad cells for the rest.
+  NEW BEST CONFIG: --city fresno_dense_abc --wind zero --despike --spatial-qa + 1/d IDW
+  prior + idw-feature + corr-reg 0.9 (huber, sqrt/clip1/4x16, no-conv, epa). OURS 3.054,
+  IDW 3.021, 1.27x off GraPhy 2.38. New files: fetch --ab-channels, scripts/apply_ab_qa.py,
+  run_ab_eval.sh, data/fresno_ab + fresno_dense_ab + fresno_dense_abc, CITY_CONFIG x2.
+  All UNCOMMITTED.
