@@ -1,5 +1,6 @@
 [repro] city=fresno_dense wind=zero hidden=16 layers=4 epochs=120 elev_feat=False elev_gate=False temp_gate=False
 [preprocess] despike: masked 862/91481 spike cells (0.94%) > 6 robust-sigma from a 13h rolling median -> treated as not observed
+[preprocess] flatline: masked 0/91481 stuck cells (0.00%) in runs >= 24h of an identical nonzero value -> not observed
 [preprocess] masked 7430/91481 implausible cells (8.12%) outside [0, 500] ug/m3 -> treated as not observed
 [preprocess] sensors: 31 -> 27 kept  (threshold=40% yearly coverage)
 [preprocess] dropped full-year duds (coverage): [('111391', 0.0), ('118085', 0.0), ('18625', 0.0), ('124099', 0.356)]

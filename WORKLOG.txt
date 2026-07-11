@@ -613,3 +613,57 @@ direction (long-gap filling + terrain), which is where "strong AND novel" lives.
   spatially-resolved wind (terrain-downscaled or per-sensor anemometer) -- not on hand.
   Convection question CLOSED for the reanalysis-wind regime. Don't spend on a Pittsburgh
   run; it would reconfirm the null. New file: run_convection_fresno.sh. All UNCOMMITTED.
+
+================================================================================
+[2026-07-10  PUSH MAE FURTHER: literature scan + data QA round 2]
+  User asked how else to push MAE + literature + "add back the simplified-out module
+  MLPs?". Findings:
+  ARCHITECTURE: our predictor = IDW_prior + SMALL residual (corr-reg'd). Diffusion is
+  the SIMPLIFIED module (linear W + per-feature rate, FIXED 1/d Laplacian = IDW's own
+  isotropic kernel); convection already has 4 MLPs. Adding MLP capacity to the residual
+  is contra-indicated by our OWN ablations (dense l6h32 WORSE 3.545; lower corr-reg
+  WORSE) -> overfits at N=18-27. The useful capacity per the literature is in the
+  interpolation WEIGHTS (learned/physics/attention adjacency) + implicit augmentation,
+  NOT a deeper residual.
+  LITERATURE (inductive GNN kriging): IGNNK (AAAI'21) + KCN (AAAI'20) + PGITS (2025,
+  physics-guided air-quality). Two transferable ideas: (1) RANDOM-SUBGRAPH / node-mask
+  training = implicit augmentation, how they beat kriging on small nets; (2) physics in
+  the graph WEIGHTS (W_phy = mu*W_adv + (1-mu)*W_diff), but their W_adv needs
+  spatially-varying wind we measured is COMMON-MODE -> inert for us.
+  User chose: BOTH data-QA-first, then IGNNK-style training.
+
+  DATA QA ROUND 2 (preprocessing.py: mask_flatline + mask_spatial_outliers, flags
+  --flatline / --spatial-qa; run_qa.sh; fresno_dense, dense-best model, 8 seeds):
+    despike (base)          OURS 3.451  IDW 3.391
+    + flatline              OURS 3.451  IDW 3.391   (EXACT no-op: no stuck runs in-range)
+    + spatial-qa            OURS 3.368  IDW 3.339   <- small real win (-0.083 / -0.052)
+    + both                  OURS 3.368  IDW 3.339
+  FINDING: within-range data is ALREADY clean (despike was the big QA win). Flatline
+  inert; spatial-qa banks a modest -0.08 (its 83 flagged cells were faults not hotspots
+  -- both OURS & IDW improved). New dense-best = despike + spatial-qa (OURS 3.368, both
+  ~1.40x off GraPhy). Further statistical QA of our own bytes is ~EXHAUSTED; the residual
+  gap to GraPhy's ~2.7 IDW needs A/B-channel data (a re-fetch) or better sensors, not
+  more filters. New files: preprocessing.py filters, run_qa.sh. NEXT = IGNNK training.
+  All UNCOMMITTED.
+
+  IGNNK-STYLE RANDOM MASKING (eval_inductive --mask-frac-hi: sample per-step hidden
+  fraction ~U[mask_frac, mask_frac_hi] = implicit augmentation; run_ignnk.sh;
+  fresno_dense, despike+spatial-qa, 1/d prior, 8 seeds; dense IDW = 3.339):
+    base fixed 0.25, cr0.9              OURS 3.368
+    aug 0.2-0.6,     cr0.9             OURS 3.368  (identical MAE; RMSE/R2 noise-better)
+    aug 0.3-0.7,     cr0.9             OURS 3.380  (harder masking slightly worse)
+    aug 0.2-0.6,     cr0.6             OURS 3.473  (looser leash worse again)
+  FINDING: augmentation gives NO MAE gain; it does NOT unlock the residual. THIRD
+  independent confirmation (after dense-diagnostic + convection) that on a DENSE PM net
+  IDW is near-optimal and the residual-on-IDW GNN cannot beat it -- OURS floors at ~IDW.
+
+  SESSION-END ASSESSMENT (honest): within the current residual-on-IDW architecture we are
+  at the ceiling on dense data (OURS 3.368 ~ IDW 3.339, 1.40x off GraPhy 2.38). Levers
+  that moved MAE: despike (big), kriging prior on SPARSE, density (IDW 4.16->3.34),
+  spatial-qa (small). Levers conclusively DEAD: convection (common-mode wind), temp/AOD
+  (common-mode), L1/recal, geom-feats, extra capacity, IGNNK masking. Two real paths
+  remain, both OUTSIDE what's been tried: (A) A/B-channel data re-fetch -> clean toward
+  GraPhy's likely ~2.7 IDW (DATA, not model); (B) abandon residual-on-IDW for a from-
+  scratch LEARNED-ANISOTROPIC-WEIGHT interpolator (GraPhy's actual learned diffusion),
+  trained pure w/ the new augmentation -- research bet, low expected payoff since IDW is
+  near-optimal on dense. New files: run_ignnk.sh, eval --mask-frac-hi. All UNCOMMITTED.

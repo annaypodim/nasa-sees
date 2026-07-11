@@ -334,7 +334,14 @@ def run_seed(seed, graph, args):
             known_train = train_idx[obs[t, train_idx]]
             if len(known_train) < 3:
                 continue
-            n_hide = max(1, int(len(known_train) * args.mask_frac))
+            # IGNNK-style implicit augmentation: instead of always hiding the same
+            # fraction, sample it per step over [mask_frac, mask_frac_hi]. Harder
+            # (higher-fraction) steps force predict-many-from-few extrapolation that
+            # matches a sparse held-out sensor; easier steps keep dense supervision.
+            # --mask-frac-hi unset -> mf == mask_frac (original fixed behavior).
+            mf = (args.mask_frac if args.mask_frac_hi is None
+                  else rng.uniform(args.mask_frac, args.mask_frac_hi))
+            n_hide = max(1, int(len(known_train) * mf))
             targets = rng.choice(known_train, size=n_hide, replace=False)
             x = node_features(int(t))
             x[targets, 0] = UNKNOWN
@@ -422,6 +429,10 @@ def main():
     ap.add_argument("--layers", type=int, default=4)
     ap.add_argument("--lr", type=float, default=0.01)
     ap.add_argument("--mask-frac", type=float, default=0.25)
+    ap.add_argument("--mask-frac-hi", type=float, default=None,
+                    help="IGNNK-style random masking: sample the per-step hidden "
+                         "fraction uniformly in [mask-frac, mask-frac-hi] as implicit "
+                         "augmentation. Unset -> fixed mask-frac (original behavior).")
     ap.add_argument("--transform", choices=["log", "linear", "sqrt"], default="sqrt",
                     help="target transform before z-scoring. sqrt (default) trains "
                          "stably near-linear; log underpredicts peaks; linear needs "
