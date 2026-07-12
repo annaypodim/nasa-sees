@@ -187,6 +187,8 @@ CITY_CONFIG = {
                 purple_air_dir=DATA_DIR / "fresno_dense" / "pm25" / "urban",
                 wind_zip=DATA_DIR / "fresno_dense" / "wind" / "none.zip",
                 wind_dir=DATA_DIR / "fresno_dense" / "wind" / "urban",
+                # HRRR wind keyed by sensor-id (data/fresno); dense reuses same ids.
+                wind_hrrr_dir=DATA_DIR / "fresno" / "wind_hrrr",
             ),
         },
     ),
@@ -213,6 +215,12 @@ CITY_CONFIG = {
                 purple_air_dir=DATA_DIR / "fresno_dense_abc" / "pm25" / "urban",
                 wind_zip=DATA_DIR / "fresno_dense_abc" / "wind" / "none.zip",
                 wind_dir=DATA_DIR / "fresno_dense_abc" / "wind" / "urban",
+                # HRRR 3km wind is fetched once per sensor-id under data/fresno
+                # (scripts/fetch_wind_hrrr.py). dense_abc reuses those same sensor
+                # ids, so point --wind hrrr here; unmatched sensors zero-fill.
+                # Needed by the FAITHFUL GraPhy convection module (the IDW-residual
+                # path runs --wind zero because convection was inert there).
+                wind_hrrr_dir=DATA_DIR / "fresno" / "wind_hrrr",
             ),
         },
     ),

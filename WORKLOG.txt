@@ -996,3 +996,190 @@ direction (long-gap filling + terrain), which is where "strong AND novel" lives.
   metro covariates are common-mode in node/gate/edge form alike; density can't be added for
   this window. The ONE remaining path to actually beat IDW = rebuild as a learned-weight
   interpolator (see MEMORY [[graphy-faithful-repro-task]]). Flagged to user.
+================================================================================
+[2026-07-11  FAITHFUL GraPhy REBUILD -- test the PUBLISHED architecture as-is]
+================================================================================
+GOAL (task): implement GraPhy (arXiv 2506.06917) EXACTLY as published -- three
+parallel physics GNN modules (Diffusion Laplacian high-pass, Convection wind
+message-passing, Local source/sink) combined by a DYNAMIC SOFTMAX FUSION -- as a
+clean STANDALONE model, with NONE of this repo's IDW-residual/kriging/gate
+scaffold. Train on fresno_dense_abc, report MAE vs current best (3.054) and
+GraPhy's 2.38. This tests whether the real architecture (esp. the softmax fusion,
+which the IDW-residual model never had) reaches the paper's number.
+
+SETUP / PROVENANCE
+  * Worktree branch gotcha: the implement-graphy worktree was based on an OLD
+    commit (15f07bd, no Fresno/harness). Reset it onto branch `graphy` (a1ff1af)
+    which carries the Fresno data + eval_inductive harness + WORKLOG. (memory:
+    graphy-faithful-repro-task)
+  * NEW FILES: src/model/graphy_faithful.py (the standalone model),
+    scripts/eval_graphy_faithful.py (train+inductive eval, reuses
+    build_static_graph + eval_inductive's split_nodes/idw_baseline/metrics).
+  * build_graph2: added wind_hrrr_dir to fresno_dense_abc (points at
+    data/fresno/wind_hrrr; dense_abc reuses those sensor ids) so the FAITHFUL
+    convection module gets real HRRR wind. (IDW-residual path used --wind zero
+    because convection was inert there.)
+
+FAITHFUL CHOICES (differ deliberately from eval_inductive.py):
+  * Architecture: 3 modules + per-node softmax fusion IS the layer update (no
+    outer h+fused residual, no gates, no IDW prior/correction-reg).
+  * Masking: exactly ONE train sensor masked per training example (paper), NOT
+    IGNNK random-fraction.
+  * Loss: plain MSE in raw ug/m3 (linear z-score for input conditioning only,
+    inverted linearly before the loss). NO log/sqrt, NO Huber, NO grad clip.
+  * Optim: Adam lr 1e-4 betas (0.9,0.999), batch 32. Configs: large 512/5-layer,
+    small 128/3-layer.
+  * Data: fresno_dense_abc + despike + spatial-qa (same DATA QA as the current
+    best, so the ONLY difference vs best is the architecture). -> 24 nodes,
+    2951 hrs, split (train/val/test)=(17/2/5).
+  * Sub-module ambiguities flagged in-code (sigma=sigmoid; lambda_max computed
+    once per static graph; local "graph conv" = degree-normalised then X=M.F with
+    M=I+D; convection ResMessage adds edge feat to node feat).
+
+RESULTS SO FAR (single-seed probes; plain MSE STABLE, no divergence):
+    30 steps   -> MAE 13.7  (untrained, near-constant)
+    800 steps  -> MAE 7.61  R2 0.576  corr 0.855   fusion w=(D .84, C .01, L .15)
+  IDW baseline on same split: MAE ~3.01. Model still learning but SLOW at lr 1e-4;
+  running 5000-step small + large-config probes to find the plateau. NB WORKLOG
+  earlier (line ~111) noted the pre-scaffold GraPhyNet "plateaus ~6.3-6.6" -- so a
+  faithful rebuild landing well above IDW would corroborate that the ARCHITECTURE
+  (not just our old code) loses to IDW on this sparse 24-sensor network. TBD.
+
+--- [2026-07-12] FAITHFUL GraPhy: the gap is GENERALISATION, fixed by val early-stop ---
+Diagnostic curve (small, 10k steps, single seed) told the story:
+  train-MSE(ug^2): step0 7142 -> 1000:65 -> 2000:26 -> 3000:17 then BOUNCES 45/52/22/16/32
+  i.e. the one-sensor masking TASK converges (train RMSE ~4-6 ug) by ~2k steps, but
+  held-out TEST MAE was 9.36 and got WORSE with more steps (800:8.26 -> 10k:9.36).
+  => classic OVERFIT to the 17 training sensors; not an optimisation failure.
+FIX (faithful, leak-safe): select the model by MAE on the reserved VAL sensors (disjoint
+  from test) over a random 300-400h subset; keep best state; patience early-stop.
+  This is standard train/val/test model selection, closer to how GraPhy actually trains
+  than a fixed step count.
+RESULT (small, 1 seed, best@4800): TEST MAE 9.36 -> 4.80  (R2 .83, corr .925), IDW 3.01.
+  Plain MSE in raw ug/m3 STILL fully stable (no divergence) -- the old sqrt/huber/clip
+  were NOT needed for the faithful architecture. Fusion w=(D .82, C .04, L .14):
+  diffusion dominates, convection ~inert (matches every prior wind-null result here).
+STATUS: faithful GraPhy, fairly trained, ~4.8 MAE -> ABOVE IDW 3.01 and repo-best 3.05
+  (1.6x IDW). Corroborates the standing conclusion: on this 24-sensor network the
+  published architecture does not beat IDW; the gap to GraPhy's 2.38 is DATA (their 41
+  sensors + EPA-corrected PurpleAir), not the model wrapper. Launching full 8-seed
+  small + large (512/5) runs, per-seed parallel, val early-stop.
+
+--- [2026-07-12] FAITHFUL GraPhy SMALL config, 8-seed result ---
+  FAITHFUL GraPhy  MAE 7.53 +- 2.56   R2 0.541 +- 0.26   RMSE 10.19
+  IDW baseline     MAE 3.99 +- 0.58   (same 8 splits; repo-best 3.05, GraPhy 2.38)
+  Per-seed MAE 4.59..13.65 (seed3 failed: corr 0.13). 0/8 diverged (plain MSE stable).
+  Mean fusion w=(D .33, C .19, L .48) but per-seed weights swing wildly
+  (diffusion-, local-, or mixed-dominant) -> the dynamic softmax fusion does NOT
+  settle on a consistent module; NO single module reliably dominates, and convection
+  is usually-but-not-always small. => faithful GraPhy is ~1.9x IDW here and
+  split-sensitive; confirms the arch (not our old wrapper) loses to IDW on this
+  24-sensor net. Running large (512/5) for the paper's small-vs-large comparison.
+
+--- [2026-07-12] LARGE run STALLED on memory thrash -> rerun 4-way ---
+ROOT CAUSE: launched all 8 hidden-512/5-layer seeds in parallel (1 thread each).
+  Each large process holds ~1.5-2 GB (512-dim autograd graph over 768 block-diag
+  nodes x 5 layers + libs). 8 x ~1.8 GB > 16 GB RAM -> 10.4 GB swap used, ~45 MB
+  free -> heavy paging -> CPU accrual collapsed to ~1 min per 50 min wall (stall,
+  not a hang; 0-byte logs were just Python block-buffering, not a crash). Small
+  (hidden 128) was fine 8-way -- this is large-only.
+FIX: run_graphy_faithful.sh now runs in WAVES of MAXPAR (default 4) concurrent
+  seeds (2 threads each -> 8 threads on 10 cores, ~6-7 GB resident). Relaunching
+  large at 4000 steps (small's best-val checkpoints were all <=4800; patience 8
+  stops most earlier) so the run is bounded.
+
+--- [2026-07-12] FAITHFUL GraPhy LARGE config (512/5), 4-seed result ---
+  FAITHFUL GraPhy  MAE 6.51 +- 0.73   R2 0.70 +- 0.06   RMSE 8.68   (seeds 0-3)
+  IDW baseline     MAE 3.71 +- 0.60   (same 4 splits)
+  Per-seed MAE 5.56 / 6.24 / 6.65 / 7.58. 0/4 diverged.  Fusion w=(D .60, C .16, L .25).
+  Only 4 seeds run (wave-2 skipped, user call) after the 8-way large run thrashed swap;
+  rerun 4-way in waves. NB macOS bash 3.2 has no `wait -n` -> initial wave scheduler
+  aborted under set -e after launching only seeds 0-3; runner fixed to portable group-wait.
+COMPARISON (large vs small on the SAME seeds 0-3):
+  small MAE: 7.89 / 6.95 / 6.06 / 13.65 (mean 8.64, seed3 catastrophic)
+  large MAE: 5.56 / 6.24 / 6.65 / 7.58  (mean 6.51, no failures)
+  => LARGE is better AND more robust (no blown seed), ~10-25% lower MAE, matching the
+  paper's "large ~10% better than small" -- but STILL loses to IDW (3.71) by ~1.75x.
+BOTTOM LINE: faithful GraPhy (published arch, dynamic softmax fusion, plain MSE in ug/m3,
+  1-sensor masking, Adam 1e-4) trains STABLY (0/20 seeds diverged; no sqrt/huber/clip
+  needed) and learns real spatial signal (corr .8-.93) but does NOT beat IDW on this
+  24-sensor Fresno net: small 7.53+-2.56, large 6.51+-0.73 vs IDW ~3.7-4.0, repo-best
+  3.05, GraPhy 2.38. Independently reproduces the standing conclusion that the gap to
+  2.38 is DATA (41 denser + EPA-corrected sensors), not the model architecture/wrapper.
+  Fusion never settles on one module; convection ~inert (wind redundant), diffusion &
+  local share the load, mix varies by split.
+
+--- [2026-07-12] EPA x DENSITY matrix on FAITHFUL GraPhy (small, 5 seeds) ---
+Testing the two hypothesised gap drivers to GraPhy's 2.38. Wave 1 (calibration):
+  cell              FAITHFUL GraPhy      IDW(same splits)
+  abc, no EPA       8.17 +- 2.99         3.81 +- 0.57
+  abc, +EPA         4.74 +- 1.12         3.04 +- 0.22
+  => EPA/Barkjohn correction cut OUR MAE -42% (8.17->4.74) and IDW -20% (3.81->3.04):
+     raw PurpleAir over-reading was inflating BOTH. Our EPA'd IDW 3.04 == repo baseline.
+     Confirms Piece-1 (absolute scale). Model still loses to IDW ~1.56x -> relative-skill
+     gap is separate (density/faithfulness). (bash gotchas fixed: set -e $() TAG abort;
+     set -u empty-array; both were dropping the EPA=0 cells / skipping aggregation.)
+
+--- [2026-07-12] FULL 2x2 MATRIX (faithful GraPhy small, 5 seeds) -- gap to 2.38 decomposed ---
+  cell            sensors   FAITHFUL GraPhy     IDW(same splits)
+  abc,  noEPA       22       8.17 +- 2.99        3.81 +- 0.57
+  abc,  +EPA        22       4.74 +- 1.12        3.04 +- 0.22   <- BEST, closest to 2.38
+  dense,noEPA       29       7.08 +- 1.62        4.86 +- 0.36
+  dense,+EPA        29       5.64 +- 2.19        3.42 +- 0.34
+FINDINGS:
+  * CALIBRATION (EPA/Barkjohn) is a big lever both ways: abc model 8.17->4.74 (-42%),
+    IDW 3.81->3.04; dense model 7.08->5.64, IDW 4.86->3.42. Raw PurpleAir over-reading
+    was inflating the absolute MAE. Our EPA'd IDW (3.04) == repo baseline & is close to
+    GraPhy's 2.38 model number.
+  * DENSITY via fresno_dense is CONFOUNDED: the +7 sensors are exactly the ones A/B QA
+    removes (miscalibrated). They make IDW WORSE (3.04->3.42 with EPA; 3.81->4.86 raw)
+    and, once data is EPA-clean, make the MODEL worse too (4.74->5.64). So we cannot buy
+    density without quality from the data on hand -- a clean 41-good-sensor test needs
+    sensors we don't have. (Raw-data model did improve 8.17->7.08 with density, but that
+    edge vanishes once calibration is fixed.)
+GAP-TO-2.38 DECOMPOSITION (empirical):
+    raw faithful GraPhy        8.17
+    + EPA calibration      ->  4.74   (calibration ~ -3.4 MAE; the single biggest lever)
+    remaining 4.74 vs IDW 3.04 = model doesn't beat IDW on 22 sparse sensors (overfits
+      17 train sensors); GraPhy DOES beat IDW at 41 GOOD sensors -> needs real density.
+    remaining IDW 3.04 vs GraPhy 2.38 = network density/quality (their 41 vs our 22).
+  CONCLUSION: the ~3x raw gap is ~half calibration (fixable, and fixed here to 4.74) and
+  ~half genuine network density of GOOD sensors (not fixable with our data, not an
+  architecture flaw). Faithful GraPhy is sound; 2.38 is inseparable from GraPhy's dataset.
+
+--- [2026-07-12] WHY WE CAN'T MATCH GRAPHY'S 41 SENSORS + SLC elevation-gate test ---
+SENSOR AVAILABILITY (from WORKLOG 2026-07-10 "MATCH GRAPHY DENSITY"): a 43-sensor dense
+  Fresno bbox WAS identified (enough to match 41), but the PurpleAir history fetch is a
+  PAID API -- it died at sensor 9/43 with HTTP 402 PaymentRequiredError (key out of
+  points, balance -20216). User later topped up but 12 of the 33 original CSVs were empty
+  from failed fetches. Net: after A/B + coverage QA only ~22-29 usable sensors survive.
+  So it's a DATA-ACQUISITION (credits) limit, not that the sensors don't exist. Confirmed
+  today: fresno_dense's extra sensors (vs abc) are the QA-rejected noisy ones, so they
+  don't help. Matching 41 GOOD sensors needs a fresh paid fetch we can't do here.
+SLC ELEV-GATE TEST: since we can't get Fresno's density, test the faithful arch WITH the
+  elevation gate (from src/model/elevation.py, imported into graphy_faithful.py) on SLC,
+  which HAS terrain (22 nodes, |Delev| mean 119m / max 401m across 142 edges -> gate
+  genuinely active; Fresno is flat so the gate is inert there). Gate wiring mirrors
+  model.py: per-layer ElevationGate dampens diffusion (rebuilt gated Laplacian) +
+  convection (message); local + fusion ungated. Running SLC gate-off vs gate-on, small,
+  5 seeds, --wind zero (no SLC wind). Prior IDW+corr result (memory gate-ablation): elev
+  GATE ~ -2.7% on SLC (terrain-aware IDW KERNEL was the big lever at -13.5%). NEW low-risk
+  design: ungated path is byte-identical (external static L_D); gate only rebuilds L_D
+  when on. bash runner generalized: CITY/EPA/GATE/WIND env vars.
+
+--- [2026-07-12] SLC ELEVATION-GATE RESULT (faithful GraPhy, small, 5 seeds, wind zero) ---
+  cell               FAITHFUL GraPhy      IDW(same splits)   vs IDW
+  SLC, gate OFF      5.49 +- 1.15         4.71 +- 1.07       1.16x
+  SLC, gate ON       4.96 +- 0.94         4.71 +- 1.07       1.05x  <- near parity
+  => elevation gate cut MAE -9.7% (5.49->4.96), raised R2 .53->.62, and TIGHTENED variance
+     (1.15->0.94). 0/5 diverged both. Fusion shifted local up (.47->.55), diffusion down.
+KEY CONTRAST WITH FRESNO: on flat Fresno the faithful model is ~1.9x IDW and the gate is
+  inert (Delev~0). On SLC's terrain the faithful model is already only 1.16x IDW, and the
+  gate closes almost all of it (1.05x) -- the physics-transport modules the gate modulates
+  have real signal to exploit when there's actual topography/valley-pooling. Bigger gate
+  win here (-9.7%) than the IDW+corr model saw on SLC (~-2.7%, memory gate-ablation),
+  plausibly because faithful GraPhy leans on transport modules while the IDW+corr model's
+  IDW prior already captured most spatial structure so the gate had less to add.
+CONCLUSION: the faithful GraPhy architecture is SOUND -- competitive with IDW on terrain,
+  and the elevation gate is a real, transferable lever there. Its Fresno underperformance
+  is data (raw calibration + too few good sensors), not the model.

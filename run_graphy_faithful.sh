@@ -1,0 +1,41 @@
+#!/usr/bin/env bash
+# Run the FAITHFUL GraPhy rebuild over 8 seeds, one process/seed, in WAVES of at
+# most MAXPAR concurrent seeds, then aggregate.
+# Usage:  ./run_graphy_faithful.sh <large|small> <steps> [maxpar]
+# MEMORY NOTE: each hidden-512 (large) process holds ~1.5-2 GB. Running all 8 at
+# once exhausted 16 GB RAM -> 10 GB swap -> thrash -> stall. Cap large at 4-way.
+set -euo pipefail
+CONFIG="${1:-large}"
+STEPS="${2:-4000}"
+MAXPAR="${3:-4}"
+CITY="${CITY:-fresno_dense_abc}"
+EPA="${EPA:-0}"                       # EPA=1 -> add --epa-correct
+GATE="${GATE:-0}"                     # GATE=1 -> add --elev-gate
+WIND="${WIND:-hrrr}"                  # hrrr | zero | era5
+SEEDS="${SEEDS:-0 1 2 3 4 5 6 7}"
+EXTRA=""; TAG="$CITY"
+if [ "$EPA" = "1" ]; then EXTRA="$EXTRA --epa-correct"; TAG="${TAG}_epa"; fi
+if [ "$GATE" = "1" ]; then EXTRA="$EXTRA --elev-gate"; TAG="${TAG}_gate"; fi
+PY=/Users/annaypodimatopoulou/Code/side_quests/nasa-sees/.venv/bin/python
+OUT="faithful_logs/${CONFIG}_${STEPS}_${TAG}"
+mkdir -p "$OUT"
+echo "[run] config=$CONFIG steps=$STEPS maxpar=$MAXPAR city=$CITY epa=$EPA seeds=($SEEDS) -> $OUT"
+# portable wave scheduler (macOS bash 3.2 has no `wait -n`): launch seeds in
+# groups of MAXPAR and `wait` for the whole group before the next one.
+group=()
+for s in $SEEDS; do
+  OMP_NUM_THREADS=2 MKL_NUM_THREADS=2 PYTHONPATH=. "$PY" scripts/eval_graphy_faithful.py \
+    --city "$CITY" --wind "$WIND" --despike --spatial-qa $EXTRA \
+    --config "$CONFIG" --steps "$STEPS" --seeds "$s" \
+    --val-every 250 --val-hours 300 --patience 10 \
+    > "$OUT/seed_$s.log" 2>&1 &
+  echo "[run] launched seed $s (pid $!)"
+  group+=($!)
+  if [ "${#group[@]}" -ge "$MAXPAR" ]; then
+    for p in "${group[@]}"; do wait "$p" || true; done
+    group=()
+  fi
+done
+if [ "${#group[@]}" -gt 0 ]; then for p in "${group[@]}"; do wait "$p" || true; done; fi
+echo "[run] all seeds finished; aggregating"
+"$PY" scripts/aggregate_faithful.py "$OUT"/seed_*.log | tee "$OUT/summary.txt"
