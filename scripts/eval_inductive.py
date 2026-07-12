@@ -96,7 +96,24 @@ def run_seed(seed, graph, args):
     # scale the 28:4:9 GraPhy split to N sensors
     n_test = max(1, round(N * 9 / 41))
     n_val = max(1, round(N * 4 / 41))
-    train_idx, val_idx, test_idx = split_nodes(N, n_val, n_test, rng)
+    # train-only sensors: always in the train pool, never held out as val/test targets.
+    # Use for lower-confidence nodes (e.g. single-channel-recovered sensors) that add
+    # value as interpolation neighbours but are too noisy to score fairly as targets --
+    # a denser reference network, which is what real imputation deployments have.
+    forced_train = np.array(
+        [i for i, sid in enumerate(ids) if int(sid) in getattr(args, "_train_only", set())],
+        dtype=int,
+    )
+    if forced_train.size:
+        pool = np.array([i for i in range(N) if i not in set(forced_train.tolist())], dtype=int)
+        perm = rng.permutation(pool.size)
+        n_test = max(1, round(N * 9 / 41))
+        n_val = max(1, round(N * 4 / 41))
+        test_idx = np.sort(pool[perm[:n_test]])
+        val_idx = np.sort(pool[perm[n_test:n_test + n_val]])
+        train_idx = np.sort(np.concatenate([pool[perm[n_test + n_val:]], forced_train]))
+    else:
+        train_idx, val_idx, test_idx = split_nodes(N, n_val, n_test, rng)
     hidden_input = np.concatenate([val_idx, test_idx])  # never fed their PM
 
     values = pm.to_numpy(dtype=np.float64)  # [T, N] ug/m3, NaN already filled to 0
@@ -282,6 +299,30 @@ def run_seed(seed, graph, args):
         az[~fin] = 0.0                                     # missing -> neutral
         aod_z_t = torch.tensor(az, dtype=torch.float)
 
+    # ---- TEMP / AOD EDGE GATES (sensor-pair analog of the elevation edge gate) --------
+    # Elevation feeds the gate a per-edge signed Δheight; here we feed a per-edge, per-hour
+    # signed Δtemp / Δaod (dst-src). The gate (model.py) dampens BOTH transports when the
+    # pair differs. Missing cells -> 0 -> gate==1 (inert). These are the EDGE analogs of
+    # the existing NODE temp gate / AOD feature -- do they help where the node forms didn't?
+    src_e, dst_e = edge_index.numpy()
+    edge_dtemp_t = None
+    if args.temp_edge_gate:
+        if not has_temp:
+            raise SystemExit(f"--temp-edge-gate needs temperature but has_temp=False city={args.city}")
+        tw = temp_wide.to_numpy(dtype=np.float64)          # [T, N] °C
+        dtemp = np.where(np.isfinite(tw), tw, np.nan)
+        dtemp = dtemp[:, dst_e] - dtemp[:, src_e]          # [T, E] signed Δtemp
+        edge_dtemp_t = torch.tensor(np.nan_to_num(dtemp, nan=0.0), dtype=torch.float)
+    edge_daod_t = None
+    if args.aod_edge_gate:
+        aod_csv = bg.GROUP_CONFIG[args.sensor_set].get("aod_csv")
+        aod_wide, has_aod = bg.load_aod(aod_csv, list(ids), pm.index)
+        if not has_aod:
+            raise SystemExit(f"--aod-edge-gate needs AOD but none for city={args.city}")
+        aw = aod_wide.to_numpy(dtype=np.float64)           # [T, N]
+        daod = aw[:, dst_e] - aw[:, src_e]                 # [T, E] signed Δaod
+        edge_daod_t = torch.tensor(np.nan_to_num(daod, nan=0.0), dtype=torch.float)
+
     node_in = (1 + int(args.elev_feature) + int(args.aod_feature)
                + int(args.idw_feature) + 2 * int(args.idw_geom_features))
 
@@ -334,7 +375,14 @@ def run_seed(seed, graph, args):
             known_train = train_idx[obs[t, train_idx]]
             if len(known_train) < 3:
                 continue
-            n_hide = max(1, int(len(known_train) * args.mask_frac))
+            # IGNNK-style implicit augmentation: instead of always hiding the same
+            # fraction, sample it per step over [mask_frac, mask_frac_hi]. Harder
+            # (higher-fraction) steps force predict-many-from-few extrapolation that
+            # matches a sparse held-out sensor; easier steps keep dense supervision.
+            # --mask-frac-hi unset -> mf == mask_frac (original fixed behavior).
+            mf = (args.mask_frac if args.mask_frac_hi is None
+                  else rng.uniform(args.mask_frac, args.mask_frac_hi))
+            n_hide = max(1, int(len(known_train) * mf))
             targets = rng.choice(known_train, size=n_hide, replace=False)
             x = node_features(int(t))
             x[targets, 0] = UNKNOWN
@@ -349,7 +397,9 @@ def run_seed(seed, graph, args):
             if geom is not None:
                 x = torch.cat([x, geom], dim=1)                  # IDW-confidence feats
             out = model(x, edge_index, edge_weight, edge_attr_t[t], delev,
-                        None if temp_z_t is None else temp_z_t[t])[:, 0]
+                        None if temp_z_t is None else temp_z_t[t],
+                        None if edge_dtemp_t is None else edge_dtemp_t[t],
+                        None if edge_daod_t is None else edge_daod_t[t])[:, 0]
             pred = (base if use_prior else 0.0) + out
             step_loss = loss_fn(pred[targets], z_t[t][targets])
             # keep the correction small so we can't stray far below the prior floor
@@ -385,7 +435,9 @@ def run_seed(seed, graph, args):
             if geom is not None:
                 x = torch.cat([x, geom], dim=1)
             out = model(x, edge_index, edge_weight, edge_attr_t[t], delev,
-                        None if temp_z_t is None else temp_z_t[t])[:, 0]
+                        None if temp_z_t is None else temp_z_t[t],
+                        None if edge_dtemp_t is None else edge_dtemp_t[t],
+                        None if edge_daod_t is None else edge_daod_t[t])[:, 0]
             pred_z = (base if use_prior else 0.0) + out
             for node in test_idx:
                 if obs[t, node]:
@@ -422,6 +474,10 @@ def main():
     ap.add_argument("--layers", type=int, default=4)
     ap.add_argument("--lr", type=float, default=0.01)
     ap.add_argument("--mask-frac", type=float, default=0.25)
+    ap.add_argument("--mask-frac-hi", type=float, default=None,
+                    help="IGNNK-style random masking: sample the per-step hidden "
+                         "fraction uniformly in [mask-frac, mask-frac-hi] as implicit "
+                         "augmentation. Unset -> fixed mask-frac (original behavior).")
     ap.add_argument("--transform", choices=["log", "linear", "sqrt"], default="sqrt",
                     help="target transform before z-scoring. sqrt (default) trains "
                          "stably near-linear; log underpredicts peaks; linear needs "
@@ -491,15 +547,34 @@ def main():
     ap.add_argument("--temp-gate", action="store_true",
                     help="enable the per-node temperature gate (needs per-sensor temp; "
                          "Pittsburgh only so far). Ablation; GraPhy base=off")
+    ap.add_argument("--temp-edge-gate", action="store_true",
+                    help="EDGE analog of the elevation gate: per-edge gate from signed "
+                         "Δtemp(dst-src) dampens both transports (needs temp; Pittsburgh)")
+    ap.add_argument("--aod-edge-gate", action="store_true",
+                    help="EDGE analog of the elevation gate: per-edge gate from signed "
+                         "Δaod(dst-src) (needs aod_csv; Pittsburgh)")
     ap.add_argument("--aod-feature", action="store_true",
                     help="add never-masked satellite AOD channel (spatially varying "
                          "covariate; needs aod_csv, Pittsburgh only). Ablation")
     ap.add_argument("--aod-anomaly", action="store_true",
                     help="feed AOD as a per-hour SPATIAL ANOMALY (minus city-mean) "
                          "instead of the raw level -> pure discriminative signal")
+    ap.add_argument("--train-only-ids", default="",
+                    help="comma-list of sensor IDs to keep ALWAYS in the train pool "
+                         "(never val/test targets) -- lower-confidence neighbours, e.g. "
+                         "single-channel-recovered sensors")
+    ap.add_argument("--max-nodes", type=int, default=None,
+                    help="DENSITY SWEEP: randomly keep only this many sensors (edges "
+                         "rebuilt on the subset) to trace MAE vs density. None = all.")
+    ap.add_argument("--subsample-seed", type=int, default=0,
+                    help="seed for the --max-nodes sensor subset (vary to average over "
+                         "different random subsets at a fixed density)")
     args = ap.parse_args()
+    args._train_only = {int(s) for s in args.train_only_ids.split(",") if s.strip()}
 
     bg.use_city(args.city)
+    tr.SUBSAMPLE_N = args.max_nodes
+    tr.SUBSAMPLE_SEED = args.subsample_seed
     bg.SENSOR_SET = args.sensor_set
     bg.EPA_CORRECT = args.epa_correct
     pp.DESPIKE = args.despike

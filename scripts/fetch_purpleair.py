@@ -278,6 +278,10 @@ def main() -> None:
     ap.add_argument("--extra-fields", action="store_true",
                     help="also fetch pm2.5_cf_1 + humidity (needed for the EPA/"
                          "Barkjohn PurpleAir correction in build_graph2.EPA_CORRECT)")
+    ap.add_argument("--ab-channels", action="store_true",
+                    help="also fetch the two raw laser channels pm2.5_atm_a / "
+                         "pm2.5_atm_b for A/B-agreement QA (flag/drop malfunctioning "
+                         "sensors whose channels disagree).")
     ap.add_argument("--exclude-existing", metavar="DIR", default=None,
                     help="skip HISTORY download for sensors already present under "
                          "DIR/pm25/<group>/ (matched by leading sensor-id in the "
@@ -330,6 +334,8 @@ def main() -> None:
     fields = ["pm2.5_atm"]
     if a.extra_fields:
         fields += ["pm2.5_cf_1", "humidity"]
+    if a.ab_channels:
+        fields += ["pm2.5_atm_a", "pm2.5_atm_b"]
 
     # SUPPLEMENT mode: build the set of sensor ids we already have history for, so we
     # download ONLY the new ones (never re-spend points on data we own).

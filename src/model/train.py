@@ -78,6 +78,11 @@ WIND_SOURCE = "era5"  # which wind feeds the convection module (CLI: --wind).
 #           floor for the ablation. Needs --allow-missing-inputs (all-zero wind).
 USE_CACHE = True  # load data/<city>/processed/<group> if present (CLI: --rebuild)
 STRICT_INPUTS = True  # abort if PM2.5 / distance / wind inputs are missing or all-zero
+# DENSITY SWEEP: randomly keep only SUBSAMPLE_N of the surviving sensors (edges rebuild
+# on the subset) to trace MAE(ours) & MAE(IDW) vs network density and find the crossover
+# where the learned correction starts BEATING IDW (sparse regime). None = use all sensors.
+SUBSAMPLE_N = None
+SUBSAMPLE_SEED = 0
 #                       (CLI: --allow-missing-inputs runs anyway with zero-filled features)
 SYNTH_ELEV_K = 0.0  # SANITY TEST: inject a known elevation-dependent PM2.5 offset
 #   (ug/m3 per metre of elevation above the node mean) so the field genuinely
@@ -177,6 +182,22 @@ def build_static_graph():
     v10_wide = v10_wide.reindex(columns=ids)
     temp_wide = temp_wide.reindex(columns=ids)
 
+    # density sweep: randomly thin to SUBSAMPLE_N sensors BEFORE edges are built, so the
+    # KNN graph + IDW field are recomputed on the sparser subset (a genuinely lower-density
+    # network, not just fewer targets). Subset is deterministic in SUBSAMPLE_SEED.
+    if SUBSAMPLE_N is not None and SUBSAMPLE_N < len(ids):
+        sub_rng = np.random.default_rng(SUBSAMPLE_SEED)
+        keep = np.sort(sub_rng.choice(len(ids), size=int(SUBSAMPLE_N), replace=False))
+        ids = [ids[i] for i in keep]
+        coords = coords[coords["station_id"].isin(ids)].sort_values("station_id")
+        pm = pm.reindex(columns=ids)
+        observed = observed.reindex(columns=ids)
+        u10_wide = u10_wide.reindex(columns=ids)
+        v10_wide = v10_wide.reindex(columns=ids)
+        temp_wide = temp_wide.reindex(columns=ids)
+        print(f"[subsample] density sweep -> kept {len(ids)} sensors "
+              f"(subsample_seed={SUBSAMPLE_SEED})")
+
     x_m, y_m = bg.project(coords["lat"].to_numpy(), coords["lon"].to_numpy())
     edge_index = bg.knn_edges(x_m, y_m, bg.K)
     dist = bg.distance_matrix(x_m, y_m)
@@ -199,12 +220,19 @@ def build_static_graph():
     U, V = u10_wide.to_numpy(), v10_wide.to_numpy()  # [T, N]
     u_edge = 0.5 * (U[:, src] + U[:, dst])           # [T, E] mean wind on the edge
     v_edge = 0.5 * (V[:, src] + V[:, dst])
-    speed = np.hypot(u_edge, v_edge)                              # [T, E]
-    wind_along = u_edge * ux[None, :] + v_edge * uy[None, :]      # [T, E]
+    speed = np.hypot(u_edge, v_edge)                              # [T, E]  = w_v (GraPhy)
+    wind_along = u_edge * ux[None, :] + v_edge * uy[None, :]      # [T, E]  = speed*cos(Δ)
     dist_col = np.broadcast_to(edge_dist, speed.shape)            # [T, E]
+    # GraPhy Sec 3.2 edge feature e_{j,i} = [w_v, w_A, dist]: wind speed w_v, the STANDALONE
+    # directional cosine w_A = cos(angle between wind dir and sensor-pair bearing), and
+    # distance. w_A = wind_along / |wind| = cos(Δ) in [-1,1] (0 when calm). This differs
+    # from our old term, which fed the speed-scaled along-component speed*cos(Δ) instead of
+    # the bare cosine -> GraPhy keeps speed and direction SEPARATE so the edge MLP learns
+    # their combination. Channel order [dist, w_A, w_v]; edge_mlp is order-agnostic.
+    w_A = wind_along / np.maximum(speed, 1e-6)                    # [T, E]  = cos(Δ)
     edge_attr_t = torch.tensor(
-        np.stack([dist_col, wind_along, speed], axis=-1), dtype=torch.float
-    )  # [T, E, 3]
+        np.stack([dist_col, w_A, speed], axis=-1), dtype=torch.float
+    )  # [T, E, 3] = [dist, w_A, w_v]  (GraPhy 3.2)
 
     print(
         f"[graph] set={bg.SENSOR_SET!r}  nodes={len(ids)}  "
