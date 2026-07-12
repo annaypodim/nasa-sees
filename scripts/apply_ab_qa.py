@@ -92,6 +92,13 @@ def main() -> None:
                          "(set 1.0 to disable -> drop only on low A/B correlation)")
     ap.add_argument("--corr-min", type=float, default=CORR_MIN,
                     help="drop a sensor whose A/B correlation is below this")
+    ap.add_argument("--recover-channel", action="store_true",
+                    help="instead of dropping a decorrelated sensor, keep it using ONLY "
+                         "its healthy laser channel (the one whose atm tracks the city "
+                         "PM signal), if that channel's corr-to-city >= --recover-min-corr")
+    ap.add_argument("--recover-min-corr", type=float, default=0.85,
+                    help="min corr(healthy channel, city-median PM) to recover a sensor "
+                         "as single-channel (default 0.85)")
     args = ap.parse_args()
     out_dir = DATA / args.out_name
     src_pm = SRC / "pm25" / GROUP
@@ -106,7 +113,22 @@ def main() -> None:
     out_pm.mkdir(parents=True)
 
     ab_by_id = {sid_of(f.name): f for f in ab_pm.glob("*.csv") if sid_of(f.name)}
-    kept_ids, dropped, total_cells, total_bad = [], [], 0, 0
+    kept_ids, dropped, recovered, total_cells, total_bad = [], [], [], 0, 0
+
+    # City-median PM signal: robust consensus used to decide WHICH laser channel of a
+    # decorrelated sensor is the healthy one (the good channel tracks the city; the dead
+    # one -- flatlined/stuck/garbage -- does not). Median across all sensors' averaged
+    # pm2.5_atm is insensitive to the handful of corrupt channels feeding a few sensors.
+    city = None
+    if args.recover_channel:
+        cols = {}
+        for f in src_pm.glob("*.csv"):
+            s = sid_of(f.name)
+            if s is None:
+                continue
+            d = pd.read_csv(f, usecols=["time_stamp", "pm2.5_atm"])
+            cols[s] = d.set_index("time_stamp")["pm2.5_atm"]
+        city = pd.DataFrame(cols).median(axis=1)
 
     for f in sorted(src_pm.glob("*.csv")):
         sid = sid_of(f.name)
@@ -134,6 +156,28 @@ def main() -> None:
         frac_bad = (n_bad / n_both) if n_both else 0.0
         unhealthy = (n_both >= 50 and (corr < args.corr_min or frac_bad > args.frac_max))
         if unhealthy:
+            # Try single-channel recovery: keep the sensor on its healthy channel alone
+            # rather than discard the node (density is the proven absolute lever). The
+            # healthy channel is the one whose atm tracks the city PM signal.
+            if args.recover_channel and city is not None:
+                cser = city.reindex(m["time_stamp"].values)
+                ca = pd.Series(a.values).corr(pd.Series(cser.values))
+                cb = pd.Series(b.values).corr(pd.Series(cser.values))
+                good_col, good_corr = ("pm2.5_atm_a", ca) if (ca or -1) >= (cb or -1) else ("pm2.5_atm_b", cb)
+                if pd.notna(good_corr) and good_corr >= args.recover_min_corr:
+                    ch = m[good_col]
+                    # single healthy channel becomes the PM source of truth; cf_1 has no
+                    # per-channel split in the a/b fetch, so approximate it with the same
+                    # channel (cf_1~=atm at these low Fresno concentrations). humidity kept.
+                    m["pm2.5_atm"] = ch
+                    if "pm2.5_cf_1" in m.columns:
+                        m["pm2.5_cf_1"] = ch
+                    out = m.drop(columns=["pm2.5_atm_a", "pm2.5_atm_b"])
+                    out = out[ch.notna()]
+                    out.to_csv(out_pm / f.name, index=False)
+                    kept_ids.append(sid)
+                    recovered.append((sid, good_col[-1], round(float(good_corr), 3)))
+                    continue
             dropped.append((sid, round(float(corr), 3), round(frac_bad, 3)))
             continue
 
@@ -152,6 +196,9 @@ def main() -> None:
 
     print(f"[ab-qa] sensors: {len(kept_ids)} kept, {len(dropped)} dropped for channel "
           f"inconsistency (corr<{args.corr_min} or frac_bad>{args.frac_max}): {dropped}")
+    if args.recover_channel:
+        print(f"[ab-qa] recovered {len(recovered)} as single-channel "
+              f"(sid, chan, corr-to-city): {recovered}")
     print(f"[ab-qa] per-cell: masked {total_bad}/{total_cells} joint cells "
           f"({100*total_bad/max(total_cells,1):.2f}%) as A/B-disagreement")
     print(f"[ab-qa] -> {out_dir}")

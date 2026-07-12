@@ -216,6 +216,21 @@ CITY_CONFIG = {
             ),
         },
     ),
+    # fresno_dense_abc + single-healthy-channel recovery (apply_ab_qa --recover-channel):
+    # sensors dropped for A/B decorrelation are kept on their healthy laser channel alone
+    # when that channel tracks the city PM signal (corr-to-city >= threshold). Recovers
+    # density lost to QA at zero credit cost.
+    "fresno_dense_abc_rec": dict(
+        coords_file=DATA_DIR / "fresno_dense_abc_rec" / "coords" / "sensor_lat_long_alt",
+        utm_crs="EPSG:32611",
+        groups={
+            "urban": dict(
+                purple_air_dir=DATA_DIR / "fresno_dense_abc_rec" / "pm25" / "urban",
+                wind_zip=DATA_DIR / "fresno_dense_abc_rec" / "wind" / "none.zip",
+                wind_dir=DATA_DIR / "fresno_dense_abc_rec" / "wind" / "urban",
+            ),
+        },
+    ),
 }
 
 

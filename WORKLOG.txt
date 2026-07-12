@@ -698,3 +698,128 @@ direction (long-gap filling + terrain), which is where "strong AND novel" lives.
   IDW 3.021, 1.27x off GraPhy 2.38. New files: fetch --ab-channels, scripts/apply_ab_qa.py,
   run_ab_eval.sh, data/fresno_ab + fresno_dense_ab + fresno_dense_abc, CITY_CONFIG x2.
   All UNCOMMITTED.
+
+================================================================================
+[2026-07-11  SESSION: push toward 2.38 -- density re-fetch DEAD, pivot to single-channel recovery]
+  Situated from HANDOFF + WORKLOG. Reproduced current best EXACTLY:
+    --city fresno_dense_abc, dense-best config, 8 seeds ->
+    OURS 3.054+-0.287 / IDW 3.021+-0.202 / GraPhy 2.38 (1.27x off). Env healthy.
+
+  RANKED open levers were: (1) more data QA, (2) re-fetch the 12 empty sensors to
+  match GraPhy's ~41-node density (memory directive match-graphy-density), (3) arch
+  rebuild. Pursued (2) first = biggest proven ABSOLUTE lever historically (density
+  18->27 usable dropped IDW 4.16->3.34) and explicitly user-directed.
+
+  --- DENSITY RE-FETCH INVESTIGATION (lever #2) -> DEAD END, documented ---
+  data/fresno_dense has 43 sensor files; exactly 12 are 1-row EMPTIES (114721 197623
+  198161 233743 236357 237167 240179 246355 246395 253369 296839 306814). Handoff
+  hypothesis: "old fetches failed; key works now -> re-fetch recovers 22->30+ usable."
+  METHOD: backed up the 12 empties to scratch, re-fetched via fetch_purpleair
+  --exclude-existing data/fresno_dense (supplement mode: spends points only on the 12,
+  not the 31 owned). RESULT: all re-fetches came back EMPTY AGAIN (42 bytes = header
+  only). Killed the run, restored backups (dataset back to 43 files, untouched).
+  ALSO a mistake to note: forgot --start/--end so the re-fetch used the script default
+  window (2023-01-01..2023-12-31) not the canonical Oct23-Jan24. But this only
+  strengthened the finding -- a FULL YEAR still returned empty.
+
+  RIGOROUS ROOT-CAUSE PROBE (direct PurpleAir API, not the fetch wrapper):
+   * META for 114721 + 246355: BOTH alive, last_seen ~now. So not deleted/offline-now.
+   * date_created: 246355 = 2024-10-07 (AFTER our window -> genuinely never had data
+     in Oct23-Jan24, correctly empty). 114721 = 2021-07 (existed during our window).
+   * HISTORY endpoint, canonical window Oct 1-15 2023, sids 114721/246355/197623/306814:
+     ALL return a clean header-only CSV (1 line, no data) -- NOT an API error, a true
+     empty. So even the 2021-created sensor has NO data in our window.
+   * HISTORY endpoint, RECENT 14 days, 114721/306814: BOTH return 337 rows. So the
+     sensors DO serve history -> NOT a private/read-key access problem.
+  CONCLUSION (confirmed 3 ways: meta alive, header-only not error, recent data present):
+  the 12 empties genuinely have a DATA GAP during Oct23-Jan24 (offline then, or created
+  later). Re-fetching CANNOT recover data that does not exist. Lever #2 is DEAD for this
+  study window. To add density we'd need sensors that HAD data in the window -- the box
+  36.90,-119.92,36.60,-119.58 holds only 43 (thins to 35 @0.8km; we already own all 43),
+  so no new in-window sensors exist without widening (=sparser, density trap) or going
+  sub-0.8km (redundant neighbours). Density-by-count is exhausted for this window.
+
+  PIVOT -> SINGLE-HEALTHY-CHANNEL RECOVERY (new free lever, not on the dead list):
+  A/B QA (apply_ab_qa.py) currently DROPS 5 sensors whose corr(A,B)<0.9 (123359 -.22,
+  139384 -.21, 27111 .5, 62137 .795, 87251 .87), taking usable 27->22. But a
+  decorrelated pair usually means ONE dead channel, not both -- the healthy channel is
+  still valid PM. GraPhy-grade pipelines keep the good channel rather than discard the
+  node. Recovering these ~5 as single-channel sensors could lift 22->~27 usable with
+  clean data at ZERO credit cost -> lower the IDW floor (density is the proven absolute
+  lever). Implementing next. All UNCOMMITTED.
+
+  --- SINGLE-HEALTHY-CHANNEL RECOVERY (new lever) -> PROMISING: OURS 3.05->2.87 (8-seed) ---
+  IDEA: A/B QA drops 5 sensors for corr(A,B)<0.9, but a decorrelated pair usually means
+  ONE dead channel, not both -- the healthy channel is still valid PM. Keep the good
+  channel instead of discarding the node (recover density lost to QA, zero credit cost).
+  IMPL: apply_ab_qa.py --recover-channel / --recover-min-corr. Builds a robust city-median
+  PM signal (median across all sensors' pm2.5_atm), and for each would-be-dropped sensor
+  picks the channel whose atm tracks that signal; keeps the sensor if corr-to-city >=
+  threshold. Single channel becomes pm2.5_atm; cf_1 approximated by same channel (no
+  per-channel cf_1 in the a/b fetch; cf_1~=atm at low Fresno concentrations); humidity kept.
+  Per-sensor corr-to-city (which channel is healthy):
+    123359 B .961 (A garbage mean 226) | 62137 B .933 | 87251 A .948 |
+    139384 B .728 (A broken mean 1493) | 27111 A .528 (B flatlined)
+
+  DATA-STATE BUG (SELF-INFLICTED, since RESTORED via git checkout): a FRESH apply_ab_qa
+  rebuild from data/fresno_dense did NOT reproduce the on-disk data/fresno_dense_abc.
+  data/fresno_dense/coords had dropped to 35 sensors, MISSING 8 the on-disk _abc has
+  (80125, 155829, 163097, 198871 + empties 197623/198161/233743/296839; 80125 has a pm25
+  file). ROOT CAUSE (found at cleanup, git diff): my empty-refetch ran with
+  --out data/fresno_dense, and fetch_purpleair.write_coords OVERWROTE the 43-sensor coords
+  with the 35-sensor thinned list. Also --list-only wrote Fresno coords into data/slc/coords
+  (fetch's default OUT_DIR -- a latent bug). BOTH coords files were `git checkout HEAD --`
+  RESTORED at session end (fresno_dense back to 43, slc back to its own). => to test
+  recovery cleanly I did NOT rebuild from the mangled coords; instead I copied the intact
+  on-disk _abc and ADDED only the 3 clean recovered sensors, so the ONLY delta vs the
+  3.054 baseline is +3 nodes -- that test is unaffected by the coords issue.
+
+  CLEAN TEST (_abc[36] + 3 recovered = 25 usable nodes, dense-best config, 8 seeds):
+    baseline _abc            OURS 3.054+-.29  IDW 3.021+-.20   (22 nodes)
+    _abc + 3 recovered       OURS 2.872+-.86  IDW 2.939+-.57   (25 nodes)  <- both better
+  7/8 seeds land 2.2-2.8 (great); seed 4 blew up (OURS 5.06) = a HARD test split, NOT a
+  recovered-sensor defect: per-sensor IDW leave-one-out MAE puts the 3 recovered sensors
+  MID-PACK as targets (87251 3.81, 123359 3.77, 62137 2.90) -- BETTER than 6 clean sensors
+  (155829 10.91, 189863 9.48, 198871 8.56, 104230 8.53, 124099 8.39, 163097 8.32). So the
+  recovered channels are good neighbours AND good targets; the seed-4 tail is small-N split
+  variance from adding 3 nodes (baseline seed 4 was also its worst). Recovery genuinely
+  lowers mean MAE (-6% OURS, -2.7% IDW) toward GraPhy 2.38. Running 16 seeds for a stable
+  estimate.
+  NOTE on the big-LOO clean sensors (155829 mean 33.8, 198871 mean 36.1 ~4x city median):
+  they PASS A/B (both lasers agree) -> genuine high-PM hotspots, NOT faults. Do NOT drop
+  them to chase MAE (that's gaming the eval by deleting hard real points; GraPhy predicts
+  its hard sensors too). All UNCOMMITTED.
+
+  --- RECOVERY VERDICT: DEAD (16-seed apples-to-apples) ---
+  The 8-seed 2.87 was a lucky subset. Ran 16 seeds three ways (dense-best config):
+    baseline _abc (22 nodes)               OURS 3.040+-0.377   IDW 2.983+-0.297
+    _abc + 3 recovered as SCORED targets   OURS 3.069+-1.044   IDW 3.101+-0.694
+    _abc + 3 recovered as TRAIN-ONLY nbrs  OURS 3.113+-0.375   IDW 3.008+-0.255
+  (train-only via new eval flag --train-only-ids: keep nodes always in train pool, never
+   held out -- a denser reference net, legit for imputation. Impl in run_seed split.)
+  READ: as TARGETS the recovered sensors add massive tail variance (+-1.04, seeds 4/10
+  blow to 5-6 MAE) -- single-channel PM is noisier than the 2-laser average, so held-out
+  it disagrees with the field. As NEIGHBOURS they SLIGHTLY HURT (3.113 vs 3.040) -- the
+  extra noise (+ the cf_1~=atm approximation) degrades the IDW field rather than
+  densifying it usefully. In NO role do they help. This VINDICATES the original
+  conservative A/B QA drop: those sensors are genuinely lower quality; keeping them, even
+  as pure neighbours, is net-negative. Also: 16-seed baseline 3.040 ~= 8-seed 3.054 =>
+  the documented best is stable/robust (tight +-0.38, no blow-ups).
+
+  SESSION CONCLUSION (both density levers exhausted):
+   * DENSITY RE-FETCH: dead -- the 12 empties have no data in the study window.
+   * CHANNEL RECOVERY: dead -- recovered single-channel sensors are lower-quality, hurt
+     or add variance in every role.
+  => The conservative _abc set (OURS ~3.04-3.05 / IDW ~2.98-3.02, 1.27-1.28x off GraPhy
+  2.38) stands as the best, and we are at the DATA-QUALITY CEILING for this sensor set:
+  every way to add MORE sensors either has no in-window data or injects noise. Remaining
+  paths to 2.38 (unchanged, both outside data-QA): (A) architectural rebuild to a learned-
+  anisotropic-weight interpolator that BEATS IDW on dense (research bet, low expected
+  payoff given IDW is near-optimal here); (B) a genuinely denser+cleaner sensor set than
+  central Fresno offers for this window (not available to us).
+  NEW REUSABLE INFRA (kept, harmless): apply_ab_qa.py --recover-channel/--recover-min-corr;
+  eval_inductive.py --train-only-ids; build_graph2 CITY_CONFIG['fresno_dense_abc_rec'].
+  Experimental data dirs fresno_dense_abc_rec / _abc_ctrl are scratch (safe to delete).
+  Data-hygiene NOTE: the self-inflicted coords mangle was git-restored (fresno_dense=43,
+  slc reverted). Latent bug to fix in fetch_purpleair: --list-only / a bare --out default
+  to data/slc (wrong OUT_DIR) -- guard it before the next fetch. All UNCOMMITTED.

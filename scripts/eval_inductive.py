@@ -96,7 +96,24 @@ def run_seed(seed, graph, args):
     # scale the 28:4:9 GraPhy split to N sensors
     n_test = max(1, round(N * 9 / 41))
     n_val = max(1, round(N * 4 / 41))
-    train_idx, val_idx, test_idx = split_nodes(N, n_val, n_test, rng)
+    # train-only sensors: always in the train pool, never held out as val/test targets.
+    # Use for lower-confidence nodes (e.g. single-channel-recovered sensors) that add
+    # value as interpolation neighbours but are too noisy to score fairly as targets --
+    # a denser reference network, which is what real imputation deployments have.
+    forced_train = np.array(
+        [i for i, sid in enumerate(ids) if int(sid) in getattr(args, "_train_only", set())],
+        dtype=int,
+    )
+    if forced_train.size:
+        pool = np.array([i for i in range(N) if i not in set(forced_train.tolist())], dtype=int)
+        perm = rng.permutation(pool.size)
+        n_test = max(1, round(N * 9 / 41))
+        n_val = max(1, round(N * 4 / 41))
+        test_idx = np.sort(pool[perm[:n_test]])
+        val_idx = np.sort(pool[perm[n_test:n_test + n_val]])
+        train_idx = np.sort(np.concatenate([pool[perm[n_test + n_val:]], forced_train]))
+    else:
+        train_idx, val_idx, test_idx = split_nodes(N, n_val, n_test, rng)
     hidden_input = np.concatenate([val_idx, test_idx])  # never fed their PM
 
     values = pm.to_numpy(dtype=np.float64)  # [T, N] ug/m3, NaN already filled to 0
@@ -508,9 +525,22 @@ def main():
     ap.add_argument("--aod-anomaly", action="store_true",
                     help="feed AOD as a per-hour SPATIAL ANOMALY (minus city-mean) "
                          "instead of the raw level -> pure discriminative signal")
+    ap.add_argument("--train-only-ids", default="",
+                    help="comma-list of sensor IDs to keep ALWAYS in the train pool "
+                         "(never val/test targets) -- lower-confidence neighbours, e.g. "
+                         "single-channel-recovered sensors")
+    ap.add_argument("--max-nodes", type=int, default=None,
+                    help="DENSITY SWEEP: randomly keep only this many sensors (edges "
+                         "rebuilt on the subset) to trace MAE vs density. None = all.")
+    ap.add_argument("--subsample-seed", type=int, default=0,
+                    help="seed for the --max-nodes sensor subset (vary to average over "
+                         "different random subsets at a fixed density)")
     args = ap.parse_args()
+    args._train_only = {int(s) for s in args.train_only_ids.split(",") if s.strip()}
 
     bg.use_city(args.city)
+    tr.SUBSAMPLE_N = args.max_nodes
+    tr.SUBSAMPLE_SEED = args.subsample_seed
     bg.SENSOR_SET = args.sensor_set
     bg.EPA_CORRECT = args.epa_correct
     pp.DESPIKE = args.despike

@@ -78,6 +78,11 @@ WIND_SOURCE = "era5"  # which wind feeds the convection module (CLI: --wind).
 #           floor for the ablation. Needs --allow-missing-inputs (all-zero wind).
 USE_CACHE = True  # load data/<city>/processed/<group> if present (CLI: --rebuild)
 STRICT_INPUTS = True  # abort if PM2.5 / distance / wind inputs are missing or all-zero
+# DENSITY SWEEP: randomly keep only SUBSAMPLE_N of the surviving sensors (edges rebuild
+# on the subset) to trace MAE(ours) & MAE(IDW) vs network density and find the crossover
+# where the learned correction starts BEATING IDW (sparse regime). None = use all sensors.
+SUBSAMPLE_N = None
+SUBSAMPLE_SEED = 0
 #                       (CLI: --allow-missing-inputs runs anyway with zero-filled features)
 SYNTH_ELEV_K = 0.0  # SANITY TEST: inject a known elevation-dependent PM2.5 offset
 #   (ug/m3 per metre of elevation above the node mean) so the field genuinely
@@ -176,6 +181,22 @@ def build_static_graph():
     u10_wide = u10_wide.reindex(columns=ids)
     v10_wide = v10_wide.reindex(columns=ids)
     temp_wide = temp_wide.reindex(columns=ids)
+
+    # density sweep: randomly thin to SUBSAMPLE_N sensors BEFORE edges are built, so the
+    # KNN graph + IDW field are recomputed on the sparser subset (a genuinely lower-density
+    # network, not just fewer targets). Subset is deterministic in SUBSAMPLE_SEED.
+    if SUBSAMPLE_N is not None and SUBSAMPLE_N < len(ids):
+        sub_rng = np.random.default_rng(SUBSAMPLE_SEED)
+        keep = np.sort(sub_rng.choice(len(ids), size=int(SUBSAMPLE_N), replace=False))
+        ids = [ids[i] for i in keep]
+        coords = coords[coords["station_id"].isin(ids)].sort_values("station_id")
+        pm = pm.reindex(columns=ids)
+        observed = observed.reindex(columns=ids)
+        u10_wide = u10_wide.reindex(columns=ids)
+        v10_wide = v10_wide.reindex(columns=ids)
+        temp_wide = temp_wide.reindex(columns=ids)
+        print(f"[subsample] density sweep -> kept {len(ids)} sensors "
+              f"(subsample_seed={SUBSAMPLE_SEED})")
 
     x_m, y_m = bg.project(coords["lat"].to_numpy(), coords["lon"].to_numpy())
     edge_index = bg.knn_edges(x_m, y_m, bg.K)
