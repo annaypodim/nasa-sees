@@ -949,3 +949,50 @@ direction (long-gap filling + terrain), which is where "strong AND novel" lives.
   kriging is not the sparse-regime winner; a fixed-range BLUP is a poor sparse interpolator.
   Waiting on the IDW config (looser 1/d residual, cr0.3) -- expected to track IDW closely
   (residual-on-IDW can at best tie its own prior). Full curve + plot on completion. UNCOMMITTED.
+
+  --- DENSITY-CROSSOVER SWEEP: COMPLETE (52-54/54) -> NO ROBUST CROSSOVER ---
+  Full curve (mean over 3 subsets; plot density_sweep_logs/density_crossover.png):
+    N     IDW    OURS-krig   OURS-idw
+    6    4.203    4.995      4.603
+    8    5.122    5.596      5.476     (N=8 bump = subset variance: tiny-N draws hit hotspots)
+   10    3.692    5.195      4.177
+   12    3.192    3.401      3.368
+   14    3.359    3.888      3.349 *   (idw barely under IDW, -0.010 = noise)
+   16    3.459    3.837      3.334 *   (idw under IDW -0.125, isolated, within +-0.3-0.5)
+   18    2.997    3.037      3.028
+   20    2.993    3.300      3.210
+   22    3.021    3.107      3.164
+  VERDICT: the crossover hypothesis (learned correction BEATS IDW in the sparse regime) is
+  FALSE for this architecture. Across ALL densities:
+   * OURS-krig (kriging prior) is WORSE than IDW everywhere, worst when sparse (fixed 5000m
+     range over-smooths a sparse net); converges toward IDW only when dense.
+   * OURS-idw (loose 1/d residual, cr0.3) TRACKS IDW -- ties it, dips barely under at just
+     N=14/16 (well within the +-0.3-0.5 subset noise), and is >= IDW at every other N.
+   * NO density gives a ROBUST OURS < IDW. All curves sit far above GraPhy 2.38.
+  MECHANISM: the predictor is IDW_prior + a corr-reg'd residual. When DENSE the residual has
+  no signal to add (field well-sampled) -> ties IDW. When SPARSE the residual OVERFITS the
+  few visible points -> adds NOISE -> drags BELOW IDW (worse). So sparsity makes the learned
+  part HURT, not help -- the opposite of the hoped-for sparse-regime win. This is the 5th
+  independent confirmation that residual-on-a-fixed-prior cannot beat IDW at any density.
+  PUBLISHABILITY IMPLICATION (honest): to BEAT IDW (GraPhy's headline claim) you need a
+  genuinely LEARNED interpolator -- learned/anisotropic adjacency WEIGHTS (GraPhy's actual
+  diffusion; or GAT/KCN attention over neighbour VALUES), trained end-to-end -- NOT a
+  residual bolted onto a fixed isotropic prior. Our scaffold structurally cannot win; the
+  crossover, if one exists, lives in a different architecture. New files: run_density_sweep.sh,
+  scripts/plot_density_crossover.py, scripts/extract_density_results.py, train.py SUBSAMPLE_N,
+  eval --max-nodes/--subsample-seed. All UNCOMMITTED.
+
+  ================= SESSION CONSOLIDATION (2026-07-11..12) =================
+  Goal: push past the 3.05/3.02 plateau toward GraPhy 2.38 + find a publishable win.
+  What was tried and KILLED this session (all rigorously, all documented above):
+   1. Density re-fetch (12 empty sensors)  -> DEAD: no data in the Oct23-Jan24 window.
+   2. Single-channel A/B recovery           -> DEAD: recovered sensors add variance/hurt.
+   3. GraPhy-exact WIND edge feature         -> NULL: convection still ties no-conv control.
+   4. TEMP-edge gate (Pittsburgh)            -> NULL: common-mode, pair-Δ≈0.
+   5. AOD-edge gate (Pittsburgh)             -> NULL: common-mode, pair-Δ≈0.
+   6. Density-crossover sweep                -> NO CROSSOVER: OURS >= IDW at every density.
+  BEST RESULT UNCHANGED: fresno_dense_abc, OURS 3.04-3.05 / IDW 3.02, 1.27x off 2.38.
+  THE TAKEAWAY: the residual-on-IDW architecture is at its ceiling (ties IDW, can't beat it);
+  metro covariates are common-mode in node/gate/edge form alike; density can't be added for
+  this window. The ONE remaining path to actually beat IDW = rebuild as a learned-weight
+  interpolator (see MEMORY [[graphy-faithful-repro-task]]). Flagged to user.
