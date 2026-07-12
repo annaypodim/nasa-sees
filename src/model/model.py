@@ -62,11 +62,28 @@ class GraPhyLayer(nn.Module):
         self.fusion     = Fusion(dim, n_modules=n_modules)
         self.elev_gate  = ElevationGate()   # shared height scale for both transport terms
         self.temp_gate  = TemperatureGate()  # per-node mixing scale for both transports
+        # EDGE-GATE ANALOGS of the elevation gate (per-EDGE scalar from the signed
+        # pairwise difference of a covariate; dampens BOTH transports when the pair
+        # differs). Same exp form as ElevationGate; h_init set to each covariate's scale
+        # (learnable). temp Δ ~ a few °C, AOD Δ ~ tenths. Fed the sensor-pair analog of
+        # Δelevation: Δtemp[dst,src] / Δaod[dst,src], time-varying (recomputed per hour).
+        self.temp_edge_gate = ElevationGate(h_init=5.0)
+        self.aod_edge_gate  = ElevationGate(h_init=0.2, h_floor=0.02)
 
     def forward(self, h, edge_index, edge_weight, edge_attr, edge_delev=None,
-                node_temp=None):
-        gate = None if edge_delev is None else self.elev_gate(edge_delev)   # [E]
-        # diffusion reads the elevation gate through the edge weight; convection through the message
+                node_temp=None, edge_dtemp=None, edge_daod=None):
+        # combine any active per-edge gates multiplicatively (each in (0,1]); an
+        # independent ablation passes exactly one of Δelev / Δtemp / Δaod.
+        gate = None
+        if edge_delev is not None:
+            gate = self.elev_gate(edge_delev)                      # [E]
+        if edge_dtemp is not None:
+            g = self.temp_edge_gate(edge_dtemp)
+            gate = g if gate is None else gate * g
+        if edge_daod is not None:
+            g = self.aod_edge_gate(edge_daod)
+            gate = g if gate is None else gate * g
+        # diffusion reads the gate through the edge weight; convection through the message
         diff_weight = edge_weight if gate is None else edge_weight * gate
         d = self.diffusion(h, edge_index, diff_weight)
         # TEMPERATURE gate: per-node, scales each transport's contribution at the
@@ -100,10 +117,11 @@ class GraPhyNet(nn.Module):
         self.head = nn.Linear(hidden, 1)                  # width H -> one PM2.5 value
 
     def forward(self, x, edge_index, edge_weight, edge_attr, edge_delev=None,
-                node_temp=None):
+                node_temp=None, edge_dtemp=None, edge_daod=None):
         h = self.encoder(x)
         for layer in self.layers:
-            h = layer(h, edge_index, edge_weight, edge_attr, edge_delev, node_temp)
+            h = layer(h, edge_index, edge_weight, edge_attr, edge_delev, node_temp,
+                      edge_dtemp, edge_daod)
         return self.head(h)   # [N, 1] predicted PM2.5 at every node
 
 

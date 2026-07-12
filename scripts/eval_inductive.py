@@ -299,6 +299,30 @@ def run_seed(seed, graph, args):
         az[~fin] = 0.0                                     # missing -> neutral
         aod_z_t = torch.tensor(az, dtype=torch.float)
 
+    # ---- TEMP / AOD EDGE GATES (sensor-pair analog of the elevation edge gate) --------
+    # Elevation feeds the gate a per-edge signed Δheight; here we feed a per-edge, per-hour
+    # signed Δtemp / Δaod (dst-src). The gate (model.py) dampens BOTH transports when the
+    # pair differs. Missing cells -> 0 -> gate==1 (inert). These are the EDGE analogs of
+    # the existing NODE temp gate / AOD feature -- do they help where the node forms didn't?
+    src_e, dst_e = edge_index.numpy()
+    edge_dtemp_t = None
+    if args.temp_edge_gate:
+        if not has_temp:
+            raise SystemExit(f"--temp-edge-gate needs temperature but has_temp=False city={args.city}")
+        tw = temp_wide.to_numpy(dtype=np.float64)          # [T, N] °C
+        dtemp = np.where(np.isfinite(tw), tw, np.nan)
+        dtemp = dtemp[:, dst_e] - dtemp[:, src_e]          # [T, E] signed Δtemp
+        edge_dtemp_t = torch.tensor(np.nan_to_num(dtemp, nan=0.0), dtype=torch.float)
+    edge_daod_t = None
+    if args.aod_edge_gate:
+        aod_csv = bg.GROUP_CONFIG[args.sensor_set].get("aod_csv")
+        aod_wide, has_aod = bg.load_aod(aod_csv, list(ids), pm.index)
+        if not has_aod:
+            raise SystemExit(f"--aod-edge-gate needs AOD but none for city={args.city}")
+        aw = aod_wide.to_numpy(dtype=np.float64)           # [T, N]
+        daod = aw[:, dst_e] - aw[:, src_e]                 # [T, E] signed Δaod
+        edge_daod_t = torch.tensor(np.nan_to_num(daod, nan=0.0), dtype=torch.float)
+
     node_in = (1 + int(args.elev_feature) + int(args.aod_feature)
                + int(args.idw_feature) + 2 * int(args.idw_geom_features))
 
@@ -373,7 +397,9 @@ def run_seed(seed, graph, args):
             if geom is not None:
                 x = torch.cat([x, geom], dim=1)                  # IDW-confidence feats
             out = model(x, edge_index, edge_weight, edge_attr_t[t], delev,
-                        None if temp_z_t is None else temp_z_t[t])[:, 0]
+                        None if temp_z_t is None else temp_z_t[t],
+                        None if edge_dtemp_t is None else edge_dtemp_t[t],
+                        None if edge_daod_t is None else edge_daod_t[t])[:, 0]
             pred = (base if use_prior else 0.0) + out
             step_loss = loss_fn(pred[targets], z_t[t][targets])
             # keep the correction small so we can't stray far below the prior floor
@@ -409,7 +435,9 @@ def run_seed(seed, graph, args):
             if geom is not None:
                 x = torch.cat([x, geom], dim=1)
             out = model(x, edge_index, edge_weight, edge_attr_t[t], delev,
-                        None if temp_z_t is None else temp_z_t[t])[:, 0]
+                        None if temp_z_t is None else temp_z_t[t],
+                        None if edge_dtemp_t is None else edge_dtemp_t[t],
+                        None if edge_daod_t is None else edge_daod_t[t])[:, 0]
             pred_z = (base if use_prior else 0.0) + out
             for node in test_idx:
                 if obs[t, node]:
@@ -519,6 +547,12 @@ def main():
     ap.add_argument("--temp-gate", action="store_true",
                     help="enable the per-node temperature gate (needs per-sensor temp; "
                          "Pittsburgh only so far). Ablation; GraPhy base=off")
+    ap.add_argument("--temp-edge-gate", action="store_true",
+                    help="EDGE analog of the elevation gate: per-edge gate from signed "
+                         "Δtemp(dst-src) dampens both transports (needs temp; Pittsburgh)")
+    ap.add_argument("--aod-edge-gate", action="store_true",
+                    help="EDGE analog of the elevation gate: per-edge gate from signed "
+                         "Δaod(dst-src) (needs aod_csv; Pittsburgh)")
     ap.add_argument("--aod-feature", action="store_true",
                     help="add never-masked satellite AOD channel (spatially varying "
                          "covariate; needs aod_csv, Pittsburgh only). Ablation")

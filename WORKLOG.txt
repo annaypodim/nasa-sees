@@ -823,3 +823,129 @@ direction (long-gap filling + terrain), which is where "strong AND novel" lives.
   Data-hygiene NOTE: the self-inflicted coords mangle was git-restored (fresno_dense=43,
   slc reverted). Latent bug to fix in fetch_purpleair: --list-only / a bare --out default
   to data/slc (wrong OUT_DIR) -- guard it before the next fetch. All UNCOMMITTED.
+
+================================================================================
+[2026-07-11  PIVOT: DENSITY-CROSSOVER SWEEP -- can we BEAT IDW in the sparse regime?]
+  User reframed the goal (publishability): "we need to BEAT the literature, not report
+  null results." Insight: the whole project proved IDW is near-optimal on DENSE nets, but
+  GraPhy's actual claim is a GNN that BEATS IDW. A learned correction SHOULD win where IDW
+  fails -- the SPARSE regime, where the neighbour field is under-sampled. GOAL: trace
+  MAE(ours) and MAE(IDW) vs network DENSITY on one curve, find the CROSSOVER where the
+  correction flips from >=IDW (dense) to <IDW (sparse), and claim the sparse regime.
+
+  MECHANISM (new, reusable): train.py SUBSAMPLE_N/SUBSAMPLE_SEED -- randomly thin to N
+  sensors BEFORE knn_edges/IDW are built, so the graph + IDW field are genuinely lower
+  density (not just fewer targets). eval_inductive flags --max-nodes / --subsample-seed.
+  Verified: --max-nodes 10 -> nodes=10 edges=60 split(7,1,2); --max-nodes 6 -> nodes=6.
+  SWEEP (run_density_sweep.sh -> density_sweep_logs/results.csv; plot_density_crossover.py):
+  densities N in {6,8,10,12,14,16,18,20,22}, 3 random subsets each (subsample-seed 0-2),
+  8 split-seeds per point. TWO OURS configs vs the fixed 1/d^2 IDW baseline:
+    krig = --kriging-prior --kriging-range 5000 --corr-reg 0.6  (worklog SPARSE-best: BLUP
+           beats IDW when sparse; the correction has room at cr0.6)
+    idw  = --idw-prior --idw-feature --corr-reg 0.3             (loosened residual on IDW)
+  RATIONALE for kriging: the eval's IDW baseline is naive 1/d^2; kriging (exp-cov BLUP) is
+  a strictly better interpolator when samples are sparse -> OURS(krig) SHOULD undercut the
+  IDW floor at low N, and the learned correction adds on top. At high N kriging over-smooths
+  (worklog) so OURS>=IDW there = the expected crossover shape.
+  Early single points (noisy, N=6 has train=4/val=1/test=1): per-seed OURS both beats and
+  loses to IDW -> high variance, need the subset+seed averaging. Sweep RUNNING (54 evals).
+  All UNCOMMITTED. NEXT: aggregate curve, locate crossover, then (if found) tighten the
+  config AT that density to maximise the margin OURS<IDW = the publishable result.
+
+================================================================================
+[2026-07-11  EDGE-FEATURE ABLATIONS (user directive): GraPhy wind formula + temp/AOD edge gates]
+  User: pull GraPhy's EXACT wind edge-feature from Sec 3.2 (arxiv 2506.06917), compare
+  line-for-line to ours, and if different implement THEIR version (not a reinterpretation)
+  + re-run the convection ablation. Separately build EDGE-feature temp & AOD (analog of the
+  elevation edge gate) and ablate each. Budget: 3 ablations on on-disk data; report null if
+  none beats 3.05/3.02 and flag before more compute.
+
+  --- WIND EDGE FEATURE: GraPhy Sec 3.2 vs ours (line-for-line) ---
+  GraPhy 3.2 (Convection Module): edge feature e_{j,i} = [w_v, w_A, dist_{i,j}]:
+    w_v  = wind SPEED (magnitude)
+    w_A  = cosine of the angle between wind direction and the sensor-PAIR bearing =
+           cos(theta_wind - theta_ij), a STANDALONE directional similarity in [-1,1]
+    dist = inter-sensor distance
+  OURS (train.py + convection.py): edge_attr = [dist, wind_along, wind_speed] where
+    wind_along = wind_speed * cos(theta_wind - theta_bearing)  (speed-SCALED along-component)
+  VERDICT: a genuine VARIANT, differing in the DIRECTIONAL term. Same 3 ingredients, same
+  wind-bearing angle, BUT we fed the PRODUCT speed*cos(Δ) and never the bare cosine; GraPhy
+  keeps w_v and w_A=cos(Δ) SEPARATE so the edge-MLP learns their combination (strictly more
+  expressive: [speed,cos] can represent speed*cos and more; ours can't recover bare cos w/o
+  dividing out speed). Not identical -> implemented GraPhy's exactly: w_A = wind_along/|wind|
+  = cos(Δ), edge feature [dist, w_A, w_v] (train.py, replacing the old wind_along term).
+
+  --- RE-RAN run_convection_fresno.sh with GraPhy's wind (data/fresno, HRRR, 8 seeds, IDW 4.159) ---
+    config      our-wind(prior)   GraPhy-wind(now)
+    off_06 ctrl   4.130            4.130   <- BEST (control has no conv; wind term irrelevant)
+    on_06         4.181            4.240
+    on_03         4.296            4.151
+    on_01         4.478            4.551
+  RESULT: GraPhy's EXACT wind feature does NOT unlock convection. Best conv variant on_03
+  4.151 is +0.02 over the no-conv control 4.130 = within noise (±0.83), still >= IDW 4.159.
+  => The convection null was the DATA (common-mode HRRR wind, worklog-measured 17% spatial
+  variation), NOT our wind-feature parameterization. Swapping to GraPhy's construction
+  changes nothing material. Rules out "our wind feature was wrong" as the reason convection
+  never helped. (Fresno data/fresno IDW 4.16, not the 3.05 dense best -- convection can only
+  be tested where there's real wind = sparse data/fresno; the dense best has zero wind.)
+
+  --- TEMP-EDGE + AOD-EDGE gates: built + RUNNING on Pittsburgh ---
+  temp & AOD have NO Fresno data on disk (both Pittsburgh-only: aod_csv + temp_dir); user
+  chose to run these two on Pittsburgh (has 58 usable sensors, real temp, 1km MAIAC AOD).
+  Built the sensor-pair analog of the elevation edge gate (model.py): per-edge gate from the
+  signed Δtemp / Δaod (dst-src), same exp form as ElevationGate, dampens diffusion edge
+  weight + convection message. Time-varying (recomputed per hour). eval flags --temp-edge-gate
+  / --aod-edge-gate precompute [T,E] signed diffs from temp_wide/aod_wide (missing->0->gate=1).
+  Ablation run_pgh_edge_gates.sh: strong base (idw-prior, cr0.6, despike+spatial-qa, no-conv,
+  8 seeds) vs +temp-edge vs +aod-edge. RUNNING. All UNCOMMITTED.
+
+  --- PITTSBURGH TEMP-EDGE + AOD-EDGE GATE ABLATION (8 seeds, IDW 5.027) -> BOTH NULL ---
+    config       OURS            vs base
+    base         5.014 ± 0.343    --      (OURS ~ IDW 5.027, ties as on Fresno)
+    +temp-edge   5.047 ± 0.379    +0.033  (slightly WORSE)
+    +aod-edge    5.037 ± 0.348    +0.023  (slightly WORSE)
+  Per-seed the gated runs differ slightly from base (e.g. seed3 base 4.556 / temp 4.437 /
+  aod 4.487), so the gates ARE active (wired + modulating), just add NO signal -> both are
+  a small net drag (extra params, zero payoff). SAME verdict as the NODE forms (temp gate
+  null, AOD feature neutral): temp & AOD are COMMON-MODE in space, so the sensor-PAIR Δ is
+  ~0 -> gate ~ 1 -> inert. The EDGE reformulation does not rescue them.
+
+  ================= EDGE-FEATURE PASS VERDICT: 3/3 NULL, BUDGET STOP =================
+  Per user budget ("if none of the three beats the base, stop + report null + flag before
+  more compute"):
+    1. WIND edge (GraPhy Sec 3.2 EXACT: [w_v, w_A=cos(Δ), dist], not our speed*cos): convection
+       still ties the no-conv control (4.151 vs 4.130), still >= IDW 4.159. NULL. The wind
+       null is the DATA (common-mode HRRR), not the feature form.
+    2. TEMP edge gate (Pittsburgh): 5.047 vs base 5.014. NULL.
+    3. AOD edge gate (Pittsburgh): 5.037 vs base 5.014. NULL.
+  None beats its base; none approaches the Fresno best 3.05/3.02. STOPPING here on edge
+  features rather than iterating on variants (h_init, signed-vs-abs, gate-vs-feature, conv-on,
+  looser corr-reg) -- flagged back to user before spending more. The covariate story is now
+  triple-confirmed (node form, then edge form, across wind/temp/AOD): metro-scale covariates
+  are common-mode and cannot add SPATIAL discrimination the PM field lacks -- independent of
+  whether they enter as node features, node gates, or edge gates. Reusable infra kept:
+  train.py GraPhy wind feature; model.py temp_edge_gate/aod_edge_gate; eval --temp-edge-gate/
+  --aod-edge-gate; run_pgh_edge_gates.sh. All UNCOMMITTED.
+
+  --- DENSITY-CROSSOVER SWEEP: progress + partial finding (krig config) ---
+  Runtime note (why slow): the KRIG config does a kriging BLUP linear solve PER HOUR
+  (2951) x 8 seeds per eval = ~24k solves/point in Python -> ~1-2 min/point. The first
+  ~12 points also shared 8 cores with the 5-way wind ablation + 3-way Pittsburgh ablation
+  (both heavy) so it crawled at 6-12/54; once those finished it sped up (12->18 in minutes).
+  Back half = the IDW config (plain 1/d, no BLUP) is much faster.
+  PARTIAL (krig config, mean over 3 subsets; IDW baseline = fixed 1/d^2):
+    N     IDW    OURS-krig    gap(OURS-IDW)
+    6    4.203    4.995        +0.79
+    8    5.122    5.596        +0.47
+   10    3.692    5.195        +1.50
+   12    3.192    3.401        +0.21
+   14    ~        ~            (in results.csv)
+   16    ~        ~
+  FINDING (so far, NO crossover from kriging): OURS-krig is WORSE than IDW at EVERY density,
+  and WORST when sparse (N=10 gap +1.50) -- the OPPOSITE of the crossover hypothesis. Cause:
+  the fixed kriging range (5000 m) OVER-SMOOTHS a sparse net (few, far points -> BLUP blurs
+  toward the mean), so it underperforms naive 1/d IDW exactly where we hoped it'd win. The
+  gap SHRINKS as density rises (0.79->0.21 by N=12) -> converges toward IDW when dense. So
+  kriging is not the sparse-regime winner; a fixed-range BLUP is a poor sparse interpolator.
+  Waiting on the IDW config (looser 1/d residual, cr0.3) -- expected to track IDW closely
+  (residual-on-IDW can at best tie its own prior). Full curve + plot on completion. UNCOMMITTED.
