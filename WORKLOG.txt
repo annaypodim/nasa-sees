@@ -1353,3 +1353,29 @@ Re-read arXiv 2506.06917 module equations to make graphy_faithful.py the LITERAL
     readout head (we use a Linear). Flagged, left as-is.
   Smoke: fixed convection compiles + runs; convection fusion weight active (~0.34).
   Validation run: 2 seeds small 4000 on fresno_med_max vs pre-fix 4.98 [pending].
+
+===============================================================================
+SESSION 2026-07-12 (cont. 5): SLC WIND fetched + overnight SLC+wind 2x2 ablation
+===============================================================================
+INSIGHT (user): a convection module + a directional drainage gate are dead weight with
+  --wind zero. SLC is exactly where real wind matters (canyon/drainage). Our drainage
+  gate NEEDS wind (w_A=cos(wind-bearing)). So SLC+wind is where convection + drainage +
+  the just-fixed message ALL finally have signal.
+DONE:
+  * Fetched HRRR 10m wind for SLC via Open-Meteo (FREE): scripts/fetch_wind_hrrr.py
+    --city slc, 35 sensors x 2952 h -> data/slc/wind_hrrr. Wired wind_hrrr_dir into the
+    slc CITY_CONFIG. Verified --wind hrrr -> has_wind=True on slc (22 nodes, IDW 3.59).
+  * Convection fix validated on Fresno (2 seeds): 3.94/4.55 corr .85-.87, ~= pre-fix 4.98;
+    w_C=0.00 on Fresno (convection near-unused on flat/low-wind) -> confirms SLC is the
+    venue where convection matters.
+OVERNIGHT SWEEP (scripts/sweep_slc_wind.sh, ALL wind hrrr, lr5e-4, 15k steps, patience20,
+  4 seeds, 4-way -> converged; ~45-60min/config, ~3-4h total):
+    A pure  , terrain OFF (control)
+    B pure  , terrain ON  (--terrain-gate)             <- novelty vs A
+    C hybrid, terrain OFF (--idw-prior)
+    D hybrid, terrain ON  (--idw-prior --idw-prior-elev --terrain-gate)  <- novelty vs C
+  KEY MEASUREMENTS: B-A and D-C = terrain novelty contribution (wind held ON to isolate
+  terrain). A-vs-C / B-vs-D = pure-vs-hybrid (does learned physics beat interpolation-
+  anchoring when wind advection is present?). Deep question: on a wind-advected field IDW
+  is distance-only/biased, so a CONVERGED pure model may beat the hybrid -- or the prior
+  stays the data-efficient winner on 22 sensors. Results -> faithful_logs/small_15000_slc_*.

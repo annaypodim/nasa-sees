@@ -1,0 +1,7 @@
+[slc-sweep] START 23:44:07
+[slc-sweep] === A pure  | terrain OFF (control) (23:44:07) ===
+[run] config=small steps=15000 maxpar=4 city=slc epa=0 seeds=(0 1 2 3) -> faithful_logs/small_15000_slc_lr5e-4_pat20
+[run] launched seed 0 (pid 9564)
+[run] launched seed 1 (pid 9565)
+[run] launched seed 2 (pid 9566)
+[run] launched seed 3 (pid 9567)
