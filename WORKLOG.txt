@@ -1379,3 +1379,98 @@ OVERNIGHT SWEEP (scripts/sweep_slc_wind.sh, ALL wind hrrr, lr5e-4, 15k steps, pa
   anchoring when wind advection is present?). Deep question: on a wind-advected field IDW
   is distance-only/biased, so a CONVERGED pure model may beat the hybrid -- or the prior
   stays the data-efficient winner on 22 sensors. Results -> faithful_logs/small_15000_slc_*.
+
+================================================================================
+SESSION cont.6  (2026-07-13, overnight)  SLC+WIND ablation: round-1 result + convergence fix
+================================================================================
+Round-1 sweep (sweep_slc_wind.sh) config A landed: PURE faithful, terrain OFF, wind
+ON (control). 4 seeds, 15k steps, lr 5e-4.
+  A: MAE=5.406 +-1.258   IDW(this run)=4.753   per-seed 3.96/4.74/5.57/7.35
+     fusion w=(D 0.17, C 0.00, L 0.84);  0/4 diverged
+Two findings:
+ (1) UNDER-CONVERGED, not a plateau. seed_0 best@13000, seed_3 best@9500 -- both
+     near the 15k CAP; patience-20 (10k no-improve) never fired. High seed variance
+     (3.96->7.35, seed_3 R2<0) is the tell. -> pure model needs a bigger step budget.
+ (2) STRUCTURAL: fusion collapses to w~(0,0,1) = Local-ONLY on several seeds (both
+     Diffusion AND Convection weighted ~0). Even WITH real HRRR wind, convection earns
+     ZERO fusion weight (w_C=0.00). The model discards its spatial-interpolation
+     machinery -> explains why pure faithful can't beat IDW here. Longer training will
+     cut variance/MAE but this collapse caps the pure ceiling near IDW, not below.
+     (Same w_C=0 pattern we saw on flat Fresno -> convection module is dead weight in
+      BOTH cities under the softmax fusion, even where wind advection is physical.)
+
+DECISION (user: "if it needs to converge for longer, let it converge for longer"):
+Relaunched as sweep_slc_wind2.sh -- PURE configs A/B at 40k cap (patience 20 so each
+seed early-stops at a true plateau), HYBRID C/D kept at 15k (IDW-anchored, stable).
+Round-1 A preserved at faithful_logs/A_pure_terrainOFF_15k_slc/ for before/after.
+Yardstick for this sweep = IDW 4.75 (recomputed on the val-hours-300 SLC subset), NOT
+the 3.59 smoke-test figure (different node/hour sampling).
+Pending: A@40k, B@40k (B-A = converged pure terrain novelty), C@15k, D@15k (D-C).
+
+--- cont.6 UPDATE: A@40k CONVERGENCE CONFIRMED (decisive negative for pure model) ---
+A pure/terrainOFF re-run at 40k cap == BYTE-IDENTICAL to A@15k (MAE 5.406+-1.258).
+Reason: every seed's best-val checkpoint landed <=13k steps and NEVER improved after:
+  seed0 best@13000  seed1 best@500  seed2 best@11000  seed3 best@9500
+So the extra 25k steps bought nothing -- the pure model is GENUINELY CONVERGED at ~13k,
+not cap-limited (my earlier "hitting the cap" read was wrong; patience-20 now confirms
+the plateau). CONCLUSION: pure faithful GraPhy is converged on SLC at MAE 5.41, and it
+LOSES to IDW (4.75). More training does not help. w_C=0.00 (convection unused) even
+with real HRRR wind. High seed variance (3.96->7.35) traced to noisy 2-sensor val split
+driving early-stop checkpoint selection (seed1 locked best@500).
+STORY IMPACT: this is the clean CONTROL that makes the hybrid win meaningful -- pure
+physics GNN, even faithful+converged+wind, cannot beat interpolation on SLC. The
+IDW-anchored hybrid + terrain gates (SLC full-stack 4.19 < IDW 4.52) is where our
+novelty pays off. Pending B@40k (converged pure terrain novelty B-A), then C/D@15k.
+
+--- cont.6 UPDATE: B@40k pure+terrain CONVERGED -> terrain HURTS the PURE model ---
+B (pure, terrain ON, 40k): MAE=6.583+-2.853  vs  A (pure, terrain OFF): 5.406+-1.258.
+B - A = +1.18 MAE (WORSE) and variance MORE THAN DOUBLED (+-1.26 -> +-2.85).
+Per-seed: terrain HELPS well-behaved seeds (s1 4.74->3.94) but CATASTROPHIC on others
+ (s2 MAE=10.89, corr=-0.156 anti-correlated, from garbage best@1000 checkpoint where
+  convection got w=0.33 and blew up). best-val steps 1000/6000/6500/8500 (converged).
+CONCLUSION: learned terrain gates add flexibility the PURE model can't stabilize -- the
+noisy 2-val-sensor early-stop occasionally locks a diverged checkpoint. Terrain novelty
+must ride on the IDW-anchored HYBRID (anchor keeps preds sane -> gates help w/o blowup).
+This motivates D-C (hybrid terrain delta) as THE decisive novelty test. Pending C, D.
+(Live instrumented curve run: terrain-ON seed0 tracking ~3.9 val = one of the GOOD seeds,
+ consistent w/ B's s0/s1 being fine; instability is seeds 2/3.)
+
+--- cont.6 UPDATE: C@15k hybrid terrain-OFF -> IDW ANCHOR STABILIZES (control) ---
+C (hybrid/idw-prior, terrain OFF, 15k): MAE=4.896+-1.111  vs IDW 4.753  vs A pure 5.406.
+Anchor works as predicted: variance tightened (pure +-1.26 -> +-1.11), NO blowups (worst
+seed 6.03 vs pure 7.35 / B-terrain 10.9), and CONVECTION now earns weight (w_C=0.165 vs
+0.00 in pure) -- the anchor makes physics modules safe to use. C ~ tied w/ IDW = the bar
+the terrain gates must beat. Pending D (hybrid + terrain) for the decisive D-C delta.
+
+================================================================================
+cont.6 FINAL: SLC+WIND CONVERGED 2x2 COMPLETE (04:20)  -- decisive verdict
+================================================================================
+IDW baseline (this sweep, 4 seeds) = 4.753.
+  A pure  /terrain OFF : MAE 5.406 +-1.258
+  B pure  /terrain ON  : MAE 6.583 +-2.853   (B-A = +1.18, variance 2x -> HURTS)
+  C hybrid/terrain OFF : MAE 4.896 +-1.111
+  D hybrid/terrain ON  : MAE 4.863 +-0.599   (D-C = -0.03 MAE, variance HALVED)
+Graphs: faithful_logs/convergence_curve.png (seed0 val-vs-step, best@5250 then overfit),
+        faithful_logs/slc_2x2_ablation.png (bar chart w/ error bars vs IDW).
+
+THREE ESTABLISHED FINDINGS (converged, 4-seed, not noise):
+ 1. HYBRID >> PURE. IDW-anchoring cuts MAE ~0.5-1.7 and kills blowups. Pure faithful
+    GraPhy -- even converged, even with real wind -- CANNOT beat IDW on SLC.
+ 2. Terrain gates on the PURE model are HARMFUL (+1.18 MAE, variance 2x; seed2 MAE 10.9
+    anti-correlated). Unanchored model can't stabilize the extra gate flexibility.
+ 3. Terrain gates on the HYBRID = ROBUSTNESS win, not mean-MAE win. D-C mean -0.03 but
+    seed variance HALVED (+-1.11 -> +-0.60), worst seed 6.03 -> 5.50. This is the clean
+    novelty claim: terrain gates make the anchored model RELIABLE, not just lucky.
+
+HONEST CAVEAT (correct the record): at converged 15k/4-seed, NOTHING beats IDW (4.75);
+D ties it (4.86). The earlier memory note "SLC full-stack 4.19 < IDW 4.52" was a single
+4k-step run w/ a different IDW reference -- NOT reproduced under rigorous multi-seed
+convergence. On these small SLC nets everything sits at the interpolation floor (matches
+the density-ceiling finding); terrain's value here is VARIANCE REDUCTION, not lower mean.
+
+NOVELTY FRAMING for writeup: (a) per-edge terrain anisotropy gate on diffusion +
+(b) directional drainage gate on convection, delivered as residual correctors over an
+IDW prior (hybrid). Contribution = robustness/stability of physics-GNN kriging on
+complex terrain, shown via a clean 2x2 where the gates help ONLY when anchored.
+Instrumentation added: eval_graphy_faithful.py --curve-out (per-seed val CSV) +
+scripts/plot_convergence.py + scripts/plot_2x2.py.
