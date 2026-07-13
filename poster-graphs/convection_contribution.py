@@ -5,17 +5,22 @@ by poster-graphs/measure_fusion.py: the per-node softmax weights averaged over
 every eval forward pass (3 seeds, 120 epochs). Column order [diffusion,
 convection, local] matches model.py's active-module order.
 """
+
 import json
-import numpy as np
-import matplotlib.pyplot as plt
 from pathlib import Path
-from _style import apply, FS
+
+import matplotlib.pyplot as plt
+import numpy as np
+from _style import FS, apply
+
 apply()
 
 # --- EDIT TITLE HERE ---
-TITLE = "Convection Contributes ~4% in Both Cities — Wind Is Uninformative (measured)"
+TITLE = "Physics Module Partial Contributions"
 
-shares = json.loads((Path(__file__).resolve().parent / "fusion_shares.json").read_text())
+shares = json.loads(
+    (Path(__file__).resolve().parent / "fusion_shares.json").read_text()
+)
 CITY_LABEL = {"fresno": "Fresno", "slc": "Salt Lake City"}
 segs = ["Diffusion", "Convection", "Local"]
 seg_keys = ["diffusion", "convection", "local"]
@@ -29,12 +34,28 @@ y = np.arange(len(bars))
 left = np.zeros(len(bars))
 for j, (seg, color) in enumerate(zip(segs, COLORS)):
     w = vals[:, j]
-    ax.barh(y, w, left=left, color=color, height=0.55,
-            edgecolor="white", linewidth=2, zorder=3)
+    ax.barh(
+        y,
+        w,
+        left=left,
+        color=color,
+        height=0.55,
+        edgecolor="white",
+        linewidth=2,
+        zorder=3,
+    )
     for i in range(len(bars)):
         if w[i] > 0.03:
-            ax.text(left[i] + w[i] / 2, y[i], f"{w[i]*100:.0f}%",
-                    ha="center", va="center", fontsize=FS, color="white", zorder=4)
+            ax.text(
+                left[i] + w[i] / 2,
+                y[i],
+                f"{w[i] * 100:.0f}%",
+                ha="center",
+                va="center",
+                fontsize=FS,
+                color="white",
+                zorder=4,
+            )
     left += w
 
 ax.set_yticks(y)
@@ -46,8 +67,15 @@ ax.set_title(TITLE, fontsize=FS)
 for s in ["top", "right", "left"]:
     ax.spines[s].set_visible(False)
 ax.spines["bottom"].set_color("#c3c2b7")
-ax.legend(segs, loc="lower center", bbox_to_anchor=(0.5, -0.42),
-          ncol=3, fontsize=FS, frameon=True, framealpha=0.95)
+ax.legend(
+    segs,
+    loc="lower center",
+    bbox_to_anchor=(0.5, -0.42),
+    ncol=3,
+    fontsize=FS,
+    frameon=True,
+    framealpha=0.95,
+)
 
 fig.tight_layout()
 out = "convection_contribution.png"
