@@ -1234,3 +1234,39 @@ TRACK 2 (hybrid: bolt the FAITHFUL physics modules onto an IDW prior) -- DONE+sm
 NEXT: (a) read wave-1 result of the fresno_med_abc large run; (b) benchmark
   --terrain-gate on SLC (8 seeds) vs base + old --elev-gate; (c) benchmark
   --idw-prior (+/- elev, +/- terrain-gate) on fresno_med_abc AND slc vs IDW & GraPhy.
+
+===============================================================================
+SESSION 2026-07-12 (cont. 2): paper protocol check + SLC ablation + base-conv fix
+===============================================================================
+PAPER PROTOCOL VERIFIED (arXiv 2506.06917, ACM TOSN 2025 full text):
+  * Task = EXACTLY our protocol: mask ONE sensor, recover it from the other N-1
+    (inductive kriging). 41 sensors -> 28 train / 4 val / 9 test. Input = SINGLE
+    hourly snapshot per node (memoryless), held-out node = zeros. Loss = plain MSE.
+    => our repro is faithful on architecture AND protocol AND input. Not the gap.
+  * THEIR numbers (Table 2, 0.27 sensors/mi^2): GraPhy 2.3797, IDW 3.0653, GeoLSTM 3.373.
+    KEY: their IDW=3.07; OUR IDW on fresno_med_abc=2.83 (BETTER). So "2.38 absolute"
+    was the WRONG yardstick (diff networks). GraPhy's real claim = beat its own IDW by
+    ~22%. On our net that margin => ~2.2. Earlier "2.38 unreachable vs our IDW floor"
+    was apples-to-oranges; corrected.
+  * Calibration: they use custom local linear-regression to nearest reference station
+    (NOT EPA/Barkjohn, which we use). Their worse IDW hints noisier/more-spread data.
+  * WHY our pure faithful sucks on Fresno (6.6, 2/4 collapse): TRAINING failure, not
+    task/arch. We train on ~16 sensors vs their 28 -> a 512x5 GNN overfits; collapsed
+    seeds show best@0 (val never beat init). Fresno field is smooth (IDW already 2.83)
+    so little structure beyond IDW to learn -> unanchored model fits noise. Fixable.
+
+SLC ABLATION (8 seeds each, isolates the terrain contribution):
+  * pure faithful (handoff)                         5.49   loses to IDW 4.71
+  * plain hybrid (--idw-prior only)                 4.800  LOSES to IDW 4.518 (+6%)
+  * FULL STACK (--idw-prior --idw-prior-elev --terrain-gate) 4.190  BEATS IDW 4.518 (-7.3%)
+  => the terrain kernel + terrain gate (Track 1) deliver the ENTIRE win: 4.80->4.19
+     (-12.7%) flips loss->win. IDW anchor alone does NOT beat IDW; terrain awareness does.
+     0/8 diverged in both hybrids. Clean "our terrain methods beat interpolation where
+     vanilla GraPhy can't" result. Fresno hybrid (flat) 3.32 vs IDW 2.83 = same story
+     (no terrain signal -> residual adds variance).
+
+BASE-CONVERGENCE FIX (in progress): added --weight-decay, --dropout, --hidden, --layers
+  to eval_graphy_faithful.py (+ WD/DROPOUT/HID/LAY env in run_graphy_faithful.sh).
+  scripts/sweep_base_conv.sh sweeps pure-faithful fresno_med_abc EPA over small/tiny +
+  wd/dropout to get it to BEAT our IDW 2.83 (the true apples-to-apples GraPhy repro).
+  [results pending -> faithful_logs/sweep_base_console.log]

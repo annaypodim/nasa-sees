@@ -270,6 +270,22 @@ CITY_CONFIG = {
             ),
         },
     ),
+    # fresno_med with RELAXED A/B QA (apply_ab_qa.py --src fresno_med --ab fresno_med
+    # --frac-max 1.0 --recover-channel): drop only chronically decorrelated sensors, and
+    # keep intermittent-disagreement / single-healthy-channel ones. 32 usable (~28-30 nodes)
+    # -> matches GraPhy's 28 train sensors, the density the pure model needs to converge.
+    "fresno_med_max": dict(
+        coords_file=DATA_DIR / "fresno_med_max" / "coords" / "sensor_lat_long_alt",
+        utm_crs="EPSG:32611",
+        groups={
+            "urban": dict(
+                purple_air_dir=DATA_DIR / "fresno_med_max" / "pm25" / "urban",
+                wind_zip=DATA_DIR / "fresno_med_max" / "wind" / "none.zip",
+                wind_dir=DATA_DIR / "fresno_med_max" / "wind" / "urban",
+                wind_hrrr_dir=DATA_DIR / "fresno" / "wind_hrrr",
+            ),
+        },
+    ),
     # fresno_med after A/B QA (apply_ab_qa.py --src fresno_med --ab fresno_med
     # --out-name fresno_med_abc). The widest clean network we can assemble for Oct23-Jan24.
     "fresno_med_abc": dict(

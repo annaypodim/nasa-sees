@@ -10,12 +10,26 @@ STEPS="${2:-4000}"
 MAXPAR="${3:-4}"
 CITY="${CITY:-fresno_dense_abc}"
 EPA="${EPA:-0}"                       # EPA=1 -> add --epa-correct
-GATE="${GATE:-0}"                     # GATE=1 -> add --elev-gate
+GATE="${GATE:-0}"                     # GATE=1 -> add --elev-gate (old 2-scalar gate)
+TERRAIN="${TERRAIN:-0}"               # TERRAIN=1 -> add --terrain-gate (learned gates)
+IDWPRIOR="${IDWPRIOR:-0}"             # IDWPRIOR=1 -> add --idw-prior (hybrid residual)
+IDWELEV="${IDWELEV:-0}"               # IDWELEV=1 -> add --idw-prior-elev (terrain kernel)
 WIND="${WIND:-hrrr}"                  # hrrr | zero | era5
+WD="${WD:-0}"                         # Adam weight decay (regularizer)
+DROPOUT="${DROPOUT:-0}"               # module-MLP dropout
+HID="${HID:-}"                        # override hidden width (empty = config default)
+LAY="${LAY:-}"                        # override layer count
 SEEDS="${SEEDS:-0 1 2 3 4 5 6 7}"
 EXTRA=""; TAG="$CITY"
+if [ "$WD" != "0" ]; then EXTRA="$EXTRA --weight-decay $WD"; TAG="${TAG}_wd${WD}"; fi
+if [ "$DROPOUT" != "0" ]; then EXTRA="$EXTRA --dropout $DROPOUT"; TAG="${TAG}_do${DROPOUT}"; fi
+if [ -n "$HID" ]; then EXTRA="$EXTRA --hidden $HID"; TAG="${TAG}_h${HID}"; fi
+if [ -n "$LAY" ]; then EXTRA="$EXTRA --layers $LAY"; TAG="${TAG}_l${LAY}"; fi
 if [ "$EPA" = "1" ]; then EXTRA="$EXTRA --epa-correct"; TAG="${TAG}_epa"; fi
 if [ "$GATE" = "1" ]; then EXTRA="$EXTRA --elev-gate"; TAG="${TAG}_gate"; fi
+if [ "$TERRAIN" = "1" ]; then EXTRA="$EXTRA --terrain-gate"; TAG="${TAG}_terrain"; fi
+if [ "$IDWPRIOR" = "1" ]; then EXTRA="$EXTRA --idw-prior"; TAG="${TAG}_idw"; fi
+if [ "$IDWELEV" = "1" ]; then EXTRA="$EXTRA --idw-prior-elev"; TAG="${TAG}_idwelev"; fi
 PY=/Users/annaypodimatopoulou/Code/side_quests/nasa-sees/.venv/bin/python
 OUT="faithful_logs/${CONFIG}_${STEPS}_${TAG}"
 mkdir -p "$OUT"

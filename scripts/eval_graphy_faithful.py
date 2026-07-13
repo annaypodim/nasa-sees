@@ -105,13 +105,16 @@ def run_seed(seed, graph, args):
     hidden_base_bool[hidden_input] = True
 
     cfg = CONFIGS[args.config]
+    hidden = args.hidden if args.hidden else cfg["hidden"]   # capacity overrides
+    layers = args.layers if args.layers else cfg["layers"]
     # gate mode: terrain (new learned gates) > elev (old two-scalar gate) > none.
     gate_mode = "terrain" if args.terrain_gate else ("elev" if args.elev_gate else "none")
     use_gate = gate_mode != "none"
     model = GraPhyFaithful(node_in=1, edge_in=edge_attr_t.shape[-1],
-                           hidden=cfg["hidden"], layers=cfg["layers"],
-                           gate_mode=gate_mode)
-    opt = torch.optim.Adam(model.parameters(), lr=args.lr, betas=(0.9, 0.999))
+                           hidden=hidden, layers=layers,
+                           gate_mode=gate_mode, dropout=args.dropout)
+    opt = torch.optim.Adam(model.parameters(), lr=args.lr, betas=(0.9, 0.999),
+                           weight_decay=args.weight_decay)
     loss_fn = torch.nn.MSELoss()   # plain MSE, in ug/m3 (see below)
 
     # terrain-mode drainage gate reads per-edge wind alignment w_A = edge_attr col 1
@@ -284,6 +287,16 @@ def main():
     ap.add_argument("--steps", type=int, default=3000, help="optimizer steps")
     ap.add_argument("--batch", type=int, default=32, help="examples per step (paper: 32)")
     ap.add_argument("--lr", type=float, default=1e-4, help="Adam lr (paper: 1e-4)")
+    ap.add_argument("--weight-decay", type=float, default=0.0,
+                    help="Adam L2 weight decay. Combats the overfitting/collapse the pure "
+                         "faithful model shows on small sparse nets (few train sensors) -> "
+                         "the fix for it failing to beat IDW on Fresno. Try 1e-4..1e-3.")
+    ap.add_argument("--hidden", type=int, default=None,
+                    help="override the config hidden width (fewer params = less overfit)")
+    ap.add_argument("--layers", type=int, default=None,
+                    help="override the config layer count")
+    ap.add_argument("--dropout", type=float, default=0.0,
+                    help="dropout inside the module MLPs (regularizer; 0=off)")
     ap.add_argument("--val-every", type=int, default=200, help="steps between val checks")
     ap.add_argument("--val-hours", type=int, default=400, help="hours sampled for val MAE")
     ap.add_argument("--patience", type=int, default=12,
@@ -330,9 +343,12 @@ def main():
     tr.USE_CACHE = False
 
     cfg = CONFIGS[args.config]
+    _cfg = CONFIGS[args.config]
+    _h = args.hidden if args.hidden else _cfg["hidden"]
+    _l = args.layers if args.layers else _cfg["layers"]
     print(f"[faithful] city={args.city} wind={args.wind} config={args.config} "
-          f"(hidden={cfg['hidden']} layers={cfg['layers']}) steps={args.steps} "
-          f"batch={args.batch} lr={args.lr}")
+          f"(hidden={_h} layers={_l}) steps={args.steps} batch={args.batch} "
+          f"lr={args.lr} wd={args.weight_decay} dropout={args.dropout}")
     graph = tr.build_static_graph()
 
     seeds = [int(s) for s in args.seeds.split(",")]

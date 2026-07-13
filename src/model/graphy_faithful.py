@@ -53,12 +53,17 @@ import torch.nn as nn
 from src.model.elevation import ElevationGate, TerrainGate, DrainageGate
 
 
-def _mlp(in_dim: int, out_dim: int, hidden: int) -> nn.Sequential:
-    """2-layer perceptron -- the shared building block of the message modules."""
-    return nn.Sequential(
-        nn.Linear(in_dim, hidden), nn.ReLU(),
-        nn.Linear(hidden, out_dim),
-    )
+def _mlp(in_dim: int, out_dim: int, hidden: int, dropout: float = 0.0) -> nn.Sequential:
+    """2-layer perceptron -- the shared building block of the message modules.
+
+    Optional dropout after the hidden ReLU regularizes the (over-parameterized on
+    sparse nets) modules; dropout=0 -> byte-identical to the original two-Linear MLP.
+    """
+    layers = [nn.Linear(in_dim, hidden), nn.ReLU()]
+    if dropout > 0:
+        layers.append(nn.Dropout(dropout))
+    layers.append(nn.Linear(hidden, out_dim))
+    return nn.Sequential(*layers)
 
 
 # ---------------------------------------------------------------------------
@@ -68,9 +73,9 @@ def _mlp(in_dim: int, out_dim: int, hidden: int) -> nn.Sequential:
 #    (see GraPhyFaithful.__init__) and passed in as `L_D`.
 # ---------------------------------------------------------------------------
 class DiffusionModule(nn.Module):
-    def __init__(self, in_dim: int, dim: int):
+    def __init__(self, in_dim: int, dim: int, dropout: float = 0.0):
         super().__init__()
-        self.node_mlp = _mlp(in_dim, dim, dim)          # node representation first
+        self.node_mlp = _mlp(in_dim, dim, dim, dropout)  # node representation first
         self.W = nn.Linear(dim, dim, bias=False)        # the paper's weight matrix W
         self.l = nn.Parameter(torch.ones(dim))          # per-feature diffusion coeff
 
@@ -86,12 +91,12 @@ class DiffusionModule(nn.Module):
 #    the edge MLP's output becomes the NEXT layer's edge feature.
 # ---------------------------------------------------------------------------
 class ConvectionModule(nn.Module):
-    def __init__(self, in_dim: int, edge_in: int, dim: int):
+    def __init__(self, in_dim: int, edge_in: int, dim: int, dropout: float = 0.0):
         super().__init__()
-        self.node_mlp = _mlp(in_dim, dim, dim)          # transform x_i, x_j
-        self.edge_mlp = _mlp(edge_in, dim, dim)         # raw [dist,w_A,w_v] -> dim
-        self.msg_mlp  = _mlp(dim, dim, dim)             # ResMessage
-        self.upd_mlp  = _mlp(2 * dim, dim, dim)         # Update
+        self.node_mlp = _mlp(in_dim, dim, dim, dropout)  # transform x_i, x_j
+        self.edge_mlp = _mlp(edge_in, dim, dim, dropout)  # raw [dist,w_A,w_v] -> dim
+        self.msg_mlp  = _mlp(dim, dim, dim, dropout)     # ResMessage
+        self.upd_mlp  = _mlp(2 * dim, dim, dim, dropout)  # Update
 
     def forward(self, x, edge_index, edge_feat, edge_gate=None):
         src, dst = edge_index                           # message flows src(j) -> dst(i)
@@ -114,10 +119,10 @@ class ConvectionModule(nn.Module):
 #    X = M . F,  M_{ii} = 1 + sum_j e_{j,i}  (incoming edge-weight degree + self).
 # ---------------------------------------------------------------------------
 class LocalModule(nn.Module):
-    def __init__(self, in_dim: int, dim: int):
+    def __init__(self, in_dim: int, dim: int, dropout: float = 0.0):
         super().__init__()
-        self.node_mlp = _mlp(in_dim, dim, dim)          # local transform in isolation
-        self.conv_mlp = _mlp(dim, dim, dim)             # what each node hands neighbours
+        self.node_mlp = _mlp(in_dim, dim, dim, dropout)  # local transform in isolation
+        self.conv_mlp = _mlp(dim, dim, dim, dropout)     # what each node hands neighbours
 
     def forward(self, x, edge_index, edge_weight):
         src, dst = edge_index
@@ -137,9 +142,9 @@ class LocalModule(nn.Module):
 #    outputs. Recomputed every forward (that is what "dynamic" means).
 # ---------------------------------------------------------------------------
 class Fusion(nn.Module):
-    def __init__(self, dim: int):
+    def __init__(self, dim: int, dropout: float = 0.0):
         super().__init__()
-        self.gate = _mlp(3 * dim, 3, dim)               # -> 3 raw scores per node
+        self.gate = _mlp(3 * dim, 3, dim, dropout)      # -> 3 raw scores per node
 
     def forward(self, x_D, x_C, x_L):
         z = torch.cat([x_D, x_C, x_L], dim=1)           # [N, 3*dim]
@@ -153,12 +158,13 @@ class Fusion(nn.Module):
 # ONE GraPhy LAYER
 # ---------------------------------------------------------------------------
 class GraPhyLayer(nn.Module):
-    def __init__(self, in_dim: int, edge_in: int, dim: int, gate_mode: str = "none"):
+    def __init__(self, in_dim: int, edge_in: int, dim: int, gate_mode: str = "none",
+                 dropout: float = 0.0):
         super().__init__()
-        self.diffusion  = DiffusionModule(in_dim, dim)
-        self.convection = ConvectionModule(in_dim, edge_in, dim)
-        self.local      = LocalModule(in_dim, dim)
-        self.fusion     = Fusion(dim)
+        self.diffusion  = DiffusionModule(in_dim, dim, dropout)
+        self.convection = ConvectionModule(in_dim, edge_in, dim, dropout)
+        self.local      = LocalModule(in_dim, dim, dropout)
+        self.fusion     = Fusion(dim, dropout)
         # OPTIONAL elevation gating (NOT part of faithful GraPhy). Per-layer.
         #   "elev"    -> the original two-scalar ElevationGate, SHARED by diffusion
         #                & convection (byte-identical to the prior use_elev_gate path).
@@ -200,12 +206,13 @@ class GraPhyLayer(nn.Module):
 # ---------------------------------------------------------------------------
 class GraPhyFaithful(nn.Module):
     def __init__(self, node_in: int, edge_in: int, hidden: int = 512, layers: int = 5,
-                 gate_mode: str = "none"):
+                 gate_mode: str = "none", dropout: float = 0.0):
         super().__init__()
         dims_in = [node_in] + [hidden] * (layers - 1)   # layer 1 takes node_in, rest hidden
         edges_in = [edge_in] + [hidden] * (layers - 1)  # convection edge feat evolves to `hidden`
         self.layers = nn.ModuleList(
-            GraPhyLayer(dims_in[k], edges_in[k], hidden, gate_mode) for k in range(layers)
+            GraPhyLayer(dims_in[k], edges_in[k], hidden, gate_mode, dropout)
+            for k in range(layers)
         )
         self.head = nn.Linear(hidden, 1)                # final node feature -> PM2.5
 
