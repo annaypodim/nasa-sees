@@ -1,0 +1,5 @@
+[run] config=small steps=15000 maxpar=4 city=fresno_med_max epa=1 seeds=(0 1 2 3) -> faithful_logs/small_15000_fresno_med_max_epa_lr5e-4_pat30
+[run] launched seed 0 (pid 90080)
+[run] launched seed 1 (pid 90081)
+[run] launched seed 2 (pid 90082)
+[run] launched seed 3 (pid 90083)

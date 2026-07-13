@@ -150,9 +150,12 @@ CITY_CONFIG = {
         groups={
             "urban": dict(
                 purple_air_dir=DATA_DIR / "slc" / "pm25" / "urban",
-                # no wind data yet: these paths don't exist, load_wind zero-fills.
                 wind_zip=DATA_DIR / "slc" / "wind" / "none.zip",
                 wind_dir=DATA_DIR / "slc" / "wind" / "urban",
+                # HRRR 10m wind fetched per SLC sensor id (scripts/fetch_wind_hrrr.py
+                # --city slc). Enables --wind hrrr -> the convection module + the
+                # directional drainage gate finally have real wind on terrain.
+                wind_hrrr_dir=DATA_DIR / "slc" / "wind_hrrr",
             ),
         },
     ),

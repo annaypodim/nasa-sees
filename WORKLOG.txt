@@ -1270,3 +1270,86 @@ BASE-CONVERGENCE FIX (in progress): added --weight-decay, --dropout, --hidden, -
   scripts/sweep_base_conv.sh sweeps pure-faithful fresno_med_abc EPA over small/tiny +
   wd/dropout to get it to BEAT our IDW 2.83 (the true apples-to-apples GraPhy repro).
   [results pending -> faithful_logs/sweep_base_console.log]
+
+===============================================================================
+SESSION 2026-07-12 (cont. 3): base-model convergence investigation (beat OUR IDW)
+===============================================================================
+GOAL: reproduce GraPhy's HEADLINE apples-to-apples -> get the PURE faithful model
+(no gate, no hybrid) to BEAT our own IDW, like the paper beats its IDW 3.07->2.38.
+Diagnosis (from cont.2): pure model overfits/collapses on too few train sensors.
+
+CODE ADDED (regularization + capacity + training-length knobs):
+  * eval_graphy_faithful.py: --weight-decay, --dropout, --hidden, --layers (override
+    config capacity). graphy_faithful.py: _mlp() takes dropout (adds nn.Dropout after
+    the hidden ReLU; dropout=0 -> byte-identical); threaded through all 4 modules +
+    GraPhyLayer + GraPhyFaithful. Ungated/no-reg path unchanged.
+  * run_graphy_faithful.sh: env flags WD, DROPOUT, HID, LAY, PATIENCE, VALEVERY, LR
+    (all fold into EXTRA + TAG). scripts/sweep_base_conv.sh, sweep_train_len.sh.
+
+EXPERIMENT 1 -- regularization sweep on fresno_med_abc (23 nodes / 16 train, IDW 2.83):
+  * large (wave-1, cont.2)          6.6   (2/4 collapse)   loses 2.3x
+  * small baseline (128/3)          5.49 +- 2.39   loses 1.94x
+  * small + wd1e-3                  5.31 +- 1.82   loses 1.88x
+  => regularization gives DIMINISHING returns; capacity/reg is not the lever. High
+     variance (+-1.8-2.4) = seed instability, not just overfit.
+
+USER PUSH: "why not run on the EXPANDED set?" -> fresno_med_abc WAS the expanded (wider
+  box) set, but strict A/B QA + 40% coverage strangled 35 usable -> 16 train. FIX:
+  relaxed QA (apply_ab_qa --frac-max 1.0 --recover-channel) keeps intermittent-
+  disagreement sensors + recovers 5 on their healthy channel (all corr-to-city .88-.96)
+  -> data/fresno_med_max: 32 usable -> **30 nodes / 20 train, IDW 3.59**. Registered in
+  CITY_CONFIG. KEY: this is the PAPER ANALOG -- their IDW 3.07 on 28 sensors is noisier &
+  denser than our ultra-clean 2.83; med_max (3.59, ~30 nodes) matches the paper's regime.
+  Two distinct Fresno targets now: med_abc (clean, lowest ABSOLUTE MAE) vs med_max (dense,
+  the net for reproducing "model beats its own IDW ~22%").
+
+EXPERIMENT 2 -- regularization sweep on fresno_med_max (30 nodes / 20 train, IDW 3.59):
+  * small baseline                  4.98 +- 1.67   loses 1.38x
+  * small + wd1e-3                  4.91 +- 1.62   loses 1.37x
+  => MORE SENSORS closed the model-vs-IDW ratio (1.94x -> 1.38x, user's instinct right),
+     but reg still doesn't cross. Stopped remaining reg configs (compounding evidence).
+
+EXPERIMENT 3 -- training-length (DIFFERENT question: under-convergence?): the 4000-step
+  best-val steps spread 250..3999 with several at 3750/3999 (STILL IMPROVING at the stop)
+  -> patience-10 halts good seeds early. sweep_train_len.sh on fresno_med_max: (1) 15k
+  steps, patience 30, val-every 500; (2) lr 5e-4, 8k steps. [RUNNING; 15k is slow --
+  8-way oversubscribes 8 cores, ~35% CPU/proc -> ETA ~45-60 min for cfg1, ~1.5-2h total.]
+  If longer training pulls the mean under IDW 3.59 -> reproduction found. If it also
+  plateaus ~4.9 -> honest conclusion: our faithful repro underperforms the paper on
+  unspecified training details; the IDW-prior hybrid is the real fix.
+
+--- EXPERIMENT 3 RESULT (training length on fresno_med_max, IDW 3.59) ---
+  * 4000 steps  (patience 10): 4.98 +- 1.67   ratio 1.39x
+  * 15000 steps (patience 30): 4.311 +- 1.02  ratio 1.20x   <- longer training -13% MAE, -39% var
+  best-val steps @15k: 1000 7000 8000 9500 11500 14500 14500 14999
+  => UNDER-CONVERGENCE CONFIRMED: 4/8 seeds best-val at 14.5k-15k = STILL IMPROVING at the
+     end. The pure model is under-trained, not over-parameterized. Gap to IDW closes
+     monotonically (1.39x->1.20x) and has NOT plateaued -> more steps should cross IDW 3.59.
+  ROOT CAUSE of "faithful GraPhy sucks on Fresno" = TWO compounding, now-confirmed causes:
+    (1) too few train sensors (16->20 via relaxed QA fresno_med_max: 1.94x->1.39x)
+    (2) severe under-convergence (4k+patience10 halts early; 15k->4.31, still climbing).
+  NEXT: higher LR (5e-4, config 2 running) for faster convergence; then a long
+  (25-30k) run to actually beat IDW. Use 4-way not 8-way (8-way load=21 on 8 cores,
+  ~38% efficient -> 15k took ~140 min; 4-way would ~halve wall time).
+
+===============================================================================
+SESSION 2026-07-12 (cont. 4): FAITHFULNESS AUDIT vs paper equations + convection fix
+===============================================================================
+Re-read arXiv 2506.06917 module equations to make graphy_faithful.py the LITERAL arch
+(free points before declaring any "faithful GraPhy" result). Findings:
+  * Diffusion: paper l (.) sigma(L_D X W) AND "input features first undergo an MLP to
+    learn node representations" -> our node_mlp->W->l IS faithful (earlier worry wrong).
+  * Local: X=M.F, M_ii=1+sum e -> matches.
+  * Fusion: 1 MLP -> softmax(3) -> matches.
+  * Fresno hyperparams: 5 layers, hidden 512 -> our --config large. (Faithful Fresno
+    comparison must use large, not small; small is a fast proxy.)
+  * CONVECTION MESSAGE = THE FREE-POINTS GAP: paper ResMessage phi = MLP(concat[x_i+e,
+    x_j+e]) -- BOTH endpoint node features, each + edge. We were feeding msg_mlp(h[src]+e)
+    ONLY (source), dropping the target-node term + halving the input width. FIXED:
+    msg_mlp now 2*dim in; m = msg_mlp(concat[h[dst]+e, h[src]+e]). (This is the module the
+    user had previously RASHLY removed instead of fixing; now implemented properly.)
+  * Ambiguous / NOT changed (paper silent, changing risks anti-faithfulness): whether the
+    node MLP is ONE shared MLP feeding all 3 modules vs our per-module node_mlp; exact
+    readout head (we use a Linear). Flagged, left as-is.
+  Smoke: fixed convection compiles + runs; convection fusion weight active (~0.34).
+  Validation run: 2 seeds small 4000 on fresno_med_max vs pre-fix 4.98 [pending].

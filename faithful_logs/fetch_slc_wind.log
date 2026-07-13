@@ -1,0 +1,39 @@
+/Users/annaypodimatopoulou/Code/side_quests/nasa-sees/.venv/lib/python3.9/site-packages/urllib3/__init__.py:35: NotOpenSSLWarning: urllib3 v2 only supports OpenSSL 1.1.1+, currently the 'ssl' module is compiled with 'LibreSSL 2.8.3'. See: https://github.com/urllib3/urllib3/issues/3020
+  warnings.warn(
+[coords] 35 sensors for slc; model=gfs_hrrr 2023-10-01..2024-01-31 -> data/slc/wind_hrrr
+  [1/35] sensor       5758   2952 hours
+  [2/35] sensor       6288   2952 hours
+  [3/35] sensor       6352   2952 hours
+  [4/35] sensor      10808   2952 hours
+  [5/35] sensor      18021   2952 hours
+  [6/35] sensor      18115   2952 hours
+  [7/35] sensor      18237   2952 hours
+  [8/35] sensor      18469   2952 hours
+  [9/35] sensor      20897   2952 hours
+  [10/35] sensor      22647   2952 hours
+  [11/35] sensor      39993   2952 hours
+  [12/35] sensor      40713   2952 hours
+  [13/35] sensor      42079   2952 hours
+  [14/35] sensor      44157   2952 hours
+  [15/35] sensor      46773   2952 hours
+  [16/35] sensor      46863   2952 hours
+  [17/35] sensor      47171   2952 hours
+  [18/35] sensor      49155   2952 hours
+  [19/35] sensor      89717   2952 hours
+  [20/35] sensor      97391   2952 hours
+  [21/35] sensor     105030   2952 hours
+  [22/35] sensor     204009   2952 hours
+  [23/35] sensor     205861   2952 hours
+  [24/35] sensor     206185   2952 hours
+  [25/35] sensor     235753   2952 hours
+  [26/35] sensor     240129   2952 hours
+  [27/35] sensor     243975   2952 hours
+  [28/35] sensor     251023   2952 hours
+  [29/35] sensor     262151   2952 hours
+  [30/35] sensor     280142   2952 hours
+  [31/35] sensor     283230   2952 hours
+  [32/35] sensor     285111   2952 hours
+  [33/35] sensor     298359   2952 hours
+  [34/35] sensor     302286   2952 hours
+  [35/35] sensor     303336   2952 hours
+[done] 103320 wind rows -> data/slc/wind_hrrr

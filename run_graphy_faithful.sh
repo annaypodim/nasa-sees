@@ -30,6 +30,11 @@ if [ "$GATE" = "1" ]; then EXTRA="$EXTRA --elev-gate"; TAG="${TAG}_gate"; fi
 if [ "$TERRAIN" = "1" ]; then EXTRA="$EXTRA --terrain-gate"; TAG="${TAG}_terrain"; fi
 if [ "$IDWPRIOR" = "1" ]; then EXTRA="$EXTRA --idw-prior"; TAG="${TAG}_idw"; fi
 if [ "$IDWELEV" = "1" ]; then EXTRA="$EXTRA --idw-prior-elev"; TAG="${TAG}_idwelev"; fi
+PATIENCE="${PATIENCE:-10}"            # early-stop patience (val checks)
+VALEVERY="${VALEVERY:-250}"           # steps between val checks
+LR="${LR:-1e-4}"                      # Adam lr
+if [ "$LR" != "1e-4" ]; then EXTRA="$EXTRA --lr $LR"; TAG="${TAG}_lr${LR}"; fi
+if [ "$PATIENCE" != "10" ]; then TAG="${TAG}_pat${PATIENCE}"; fi
 PY=/Users/annaypodimatopoulou/Code/side_quests/nasa-sees/.venv/bin/python
 OUT="faithful_logs/${CONFIG}_${STEPS}_${TAG}"
 mkdir -p "$OUT"
@@ -41,7 +46,7 @@ for s in $SEEDS; do
   OMP_NUM_THREADS=2 MKL_NUM_THREADS=2 PYTHONPATH=. "$PY" scripts/eval_graphy_faithful.py \
     --city "$CITY" --wind "$WIND" --despike --spatial-qa $EXTRA \
     --config "$CONFIG" --steps "$STEPS" --seeds "$s" \
-    --val-every 250 --val-hours 300 --patience 10 \
+    --val-every "$VALEVERY" --val-hours 300 --patience "$PATIENCE" \
     > "$OUT/seed_$s.log" 2>&1 &
   echo "[run] launched seed $s (pid $!)"
   group+=($!)

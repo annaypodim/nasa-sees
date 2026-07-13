@@ -1,4 +1,4 @@
-[faithful] city=fresno_med_max wind=hrrr config=small (hidden=128 layers=3) steps=4000 batch=32 lr=0.0001 wd=0.001 dropout=0.0
+[faithful] city=fresno_med_max wind=hrrr config=small (hidden=128 layers=3) steps=15000 batch=32 lr=0.0001 wd=0.0 dropout=0.0
 [preprocess] despike: masked 831/94432 spike cells (0.88%) > 6 robust-sigma from a 13h rolling median -> treated as not observed
 [preprocess] spatial-qa: masked 71/94432 cells (0.08%) > 8 cross-sensor robust-z from the hourly network median -> not observed
 [preprocess] masked 0/94432 implausible cells (0.00%) outside [0, 500] ug/m3 -> treated as not observed
@@ -8,15 +8,15 @@
 [wind] 12/30 sensors missing wind files -> zero wind at those nodes: ['119225', '134022', '15189', '17569', '189863', '37111', '39049', '63119', '7284', '80125', '83229', '86319']
 [wind] source=HRRR 3km (/Users/annaypodimatopoulou/Code/side_quests/nasa-sees/data/fresno/wind_hrrr)
 [graph] set='urban'  nodes=30  edges=198  timesteps=2951  has_wind=True  has_temp=False
-  seed 5: OURS mae=4.689 rmse=6.807 r2=0.649 corr=0.842 (n=20317)   IDW mae=3.879   w(D,C,L)=(0.02,0.02,0.96)  best@2000(val 3.57)
+  seed 7: OURS mae=3.469 rmse=4.879 r2=0.819 corr=0.914 (n=17412)   IDW mae=3.290   w(D,C,L)=(0.66,0.00,0.34)  best@14500(val 2.21)
 
 ========================================================================
-FAITHFUL GraPhy  city=fresno_med_max  config=small  split(tr/val/te)=(20, 3, 7)  seeds=[5]  (1348s)
+FAITHFUL GraPhy  city=fresno_med_max  config=small  split(tr/val/te)=(20, 3, 7)  seeds=[7]  (8768s)
 ========================================================================
-FAITHFUL GraPhy     MAE=4.689+-0.000  RMSE=6.807  R2=0.649+-0.000  corr=0.842
-IDW baseline        MAE=3.879+-0.000  RMSE=6.193  R2=0.710+-0.000  corr=0.854
+FAITHFUL GraPhy     MAE=3.469+-0.000  RMSE=4.879  R2=0.819+-0.000  corr=0.914
+IDW baseline        MAE=3.290+-0.000  RMSE=5.266  R2=0.789+-0.000  corr=0.891
 repo best (ref)     MAE=3.054+-0.29 (IDW-residual scaffold, wind zero)
 GraPhy (paper)      MAE=2.380   (Fresno, 41 sensors, Oct23-Jan24)
-mean fusion weight  w_D(diffusion)=0.019  w_C(convection)=0.019  w_L(local)=0.963
+mean fusion weight  w_D(diffusion)=0.660  w_C(convection)=0.004  w_L(local)=0.336
 diverged seeds: 0/1  (plain MSE stable)
 ========================================================================
