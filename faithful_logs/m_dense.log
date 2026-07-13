@@ -1,0 +1,7 @@
+[run] config=small steps=4000 maxpar=5 city=fresno_dense epa=0 seeds=(0 1 2 3 4) -> faithful_logs/small_4000_fresno_dense
+[run] launched seed 0 (pid 86756)
+[run] launched seed 1 (pid 86757)
+[run] launched seed 2 (pid 86759)
+[run] launched seed 3 (pid 86762)
+[run] launched seed 4 (pid 86764)
+./run_graphy_faithful.sh: line 36: group[@]: unbound variable

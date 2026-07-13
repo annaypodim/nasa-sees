@@ -187,6 +187,8 @@ CITY_CONFIG = {
                 purple_air_dir=DATA_DIR / "fresno_dense" / "pm25" / "urban",
                 wind_zip=DATA_DIR / "fresno_dense" / "wind" / "none.zip",
                 wind_dir=DATA_DIR / "fresno_dense" / "wind" / "urban",
+                # HRRR wind keyed by sensor-id (data/fresno); dense reuses same ids.
+                wind_hrrr_dir=DATA_DIR / "fresno" / "wind_hrrr",
             ),
         },
     ),
@@ -213,6 +215,12 @@ CITY_CONFIG = {
                 purple_air_dir=DATA_DIR / "fresno_dense_abc" / "pm25" / "urban",
                 wind_zip=DATA_DIR / "fresno_dense_abc" / "wind" / "none.zip",
                 wind_dir=DATA_DIR / "fresno_dense_abc" / "wind" / "urban",
+                # HRRR 3km wind is fetched once per sensor-id under data/fresno
+                # (scripts/fetch_wind_hrrr.py). dense_abc reuses those same sensor
+                # ids, so point --wind hrrr here; unmatched sensors zero-fill.
+                # Needed by the FAITHFUL GraPhy convection module (the IDW-residual
+                # path runs --wind zero because convection was inert there).
+                wind_hrrr_dir=DATA_DIR / "fresno" / "wind_hrrr",
             ),
         },
     ),
@@ -228,6 +236,82 @@ CITY_CONFIG = {
                 purple_air_dir=DATA_DIR / "fresno_dense_abc_rec" / "pm25" / "urban",
                 wind_zip=DATA_DIR / "fresno_dense_abc_rec" / "wind" / "none.zip",
                 wind_dir=DATA_DIR / "fresno_dense_abc_rec" / "wind" / "urban",
+            ),
+        },
+    ),
+    # Full 43-sensor Fresno box re-fetched with live credits (scripts/fetch_purpleair.py
+    # --extra-fields --ab-channels --min-spacing-km 0). Recovers the 12 sensors that were
+    # empty stubs after last session's HTTP-402 mid-fetch, and carries the a/b laser
+    # channels in-file so A/B QA runs on the FULL set. Matches GraPhy's ~41-node density.
+    "fresno_full": dict(
+        coords_file=DATA_DIR / "fresno_full" / "coords" / "sensor_lat_long_alt",
+        utm_crs="EPSG:32611",
+        groups={
+            "urban": dict(
+                purple_air_dir=DATA_DIR / "fresno_full" / "pm25" / "urban",
+                wind_zip=DATA_DIR / "fresno_full" / "wind" / "none.zip",
+                wind_dir=DATA_DIR / "fresno_full" / "wind" / "urban",
+                wind_hrrr_dir=DATA_DIR / "fresno" / "wind_hrrr",
+            ),
+        },
+    ),
+    # Medium (wider) Fresno box 37.00,-120.05,36.50,-119.45: 53 listed sensors (228 m alt
+    # spread, still mostly valley). Supplements fresno_full's 43 with ~10 outer-ring sensors
+    # to push toward GraPhy's 41-node density. Built = new ring fetch + copied fresno_full CSVs.
+    "fresno_med": dict(
+        coords_file=DATA_DIR / "fresno_med" / "coords" / "sensor_lat_long_alt",
+        utm_crs="EPSG:32611",
+        groups={
+            "urban": dict(
+                purple_air_dir=DATA_DIR / "fresno_med" / "pm25" / "urban",
+                wind_zip=DATA_DIR / "fresno_med" / "wind" / "none.zip",
+                wind_dir=DATA_DIR / "fresno_med" / "wind" / "urban",
+                wind_hrrr_dir=DATA_DIR / "fresno" / "wind_hrrr",
+            ),
+        },
+    ),
+    # fresno_med with RELAXED A/B QA (apply_ab_qa.py --src fresno_med --ab fresno_med
+    # --frac-max 1.0 --recover-channel): drop only chronically decorrelated sensors, and
+    # keep intermittent-disagreement / single-healthy-channel ones. 32 usable (~28-30 nodes)
+    # -> matches GraPhy's 28 train sensors, the density the pure model needs to converge.
+    "fresno_med_max": dict(
+        coords_file=DATA_DIR / "fresno_med_max" / "coords" / "sensor_lat_long_alt",
+        utm_crs="EPSG:32611",
+        groups={
+            "urban": dict(
+                purple_air_dir=DATA_DIR / "fresno_med_max" / "pm25" / "urban",
+                wind_zip=DATA_DIR / "fresno_med_max" / "wind" / "none.zip",
+                wind_dir=DATA_DIR / "fresno_med_max" / "wind" / "urban",
+                wind_hrrr_dir=DATA_DIR / "fresno" / "wind_hrrr",
+            ),
+        },
+    ),
+    # fresno_med after A/B QA (apply_ab_qa.py --src fresno_med --ab fresno_med
+    # --out-name fresno_med_abc). The widest clean network we can assemble for Oct23-Jan24.
+    "fresno_med_abc": dict(
+        coords_file=DATA_DIR / "fresno_med_abc" / "coords" / "sensor_lat_long_alt",
+        utm_crs="EPSG:32611",
+        groups={
+            "urban": dict(
+                purple_air_dir=DATA_DIR / "fresno_med_abc" / "pm25" / "urban",
+                wind_zip=DATA_DIR / "fresno_med_abc" / "wind" / "none.zip",
+                wind_dir=DATA_DIR / "fresno_med_abc" / "wind" / "urban",
+                wind_hrrr_dir=DATA_DIR / "fresno" / "wind_hrrr",
+            ),
+        },
+    ),
+    # fresno_full after A/B channel-agreement QA (scripts/apply_ab_qa.py --src fresno_full
+    # --ab fresno_full --out-name fresno_full_abc): malfunctioning-channel sensors dropped,
+    # disagreeing cells blanked. The clean high-density network to chase GraPhy's 2.38.
+    "fresno_full_abc": dict(
+        coords_file=DATA_DIR / "fresno_full_abc" / "coords" / "sensor_lat_long_alt",
+        utm_crs="EPSG:32611",
+        groups={
+            "urban": dict(
+                purple_air_dir=DATA_DIR / "fresno_full_abc" / "pm25" / "urban",
+                wind_zip=DATA_DIR / "fresno_full_abc" / "wind" / "none.zip",
+                wind_dir=DATA_DIR / "fresno_full_abc" / "wind" / "urban",
+                wind_hrrr_dir=DATA_DIR / "fresno" / "wind_hrrr",
             ),
         },
     ),

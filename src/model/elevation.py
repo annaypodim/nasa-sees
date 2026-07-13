@@ -67,6 +67,82 @@ class ElevationGate(nn.Module):
         return torch.exp(-delev.abs() / h)
 
 
+# ===========================================================================
+# LEARNED terrain gates (richer than the fixed-form ElevationGate above)
+# ---------------------------------------------------------------------------
+# The ElevationGate uses exp(-|Δ|/h) with just TWO learned scalars (h_up,h_down).
+# These two modules keep the exp ENVELOPE (so g(0)=1 exactly -> no self-damping,
+# and the gate stays in (0,1] -> stable) but make the decay RATE a learned
+# function of the edge's terrain (and, for convection, its wind alignment):
+#
+#     g(Δ) = exp( -(|Δ|/s) * rate )        rate = softplus(MLP(features)) >= 0
+#
+# rate depends on Δ (and w_A), so the model learns a per-edge, sign-asymmetric,
+# NON-exponential terrain response instead of two global height scales. At Δ=0
+# the |Δ| factor forces g=1 regardless of the MLP -> the "no damping at equal
+# height" prior is baked in and can't be trained away.
+# ===========================================================================
+class TerrainGate(nn.Module):
+    """Diffusion gate: learned g_D(Δelev) in (0,1] with a Δ-dependent decay rate.
+
+    The faithful-model analog of the terrain-aware IDW *kernel* (our biggest SLC
+    lever). Replaces the two-scalar exp with a small MLP that reads the signed and
+    absolute height gap, so uphill/downhill and near/far gaps get their own
+    (learned, smooth) damping -- richer than h_up/h_down alone.
+    """
+
+    def __init__(self, scale: float = 200.0, hidden: int = 16):
+        super().__init__()
+        self.scale = scale
+        # features: [Δ/s, |Δ|/s, sign(Δ)] -> a positive decay rate per edge
+        self.rate_mlp = nn.Sequential(
+            nn.Linear(3, hidden), nn.ReLU(),
+            nn.Linear(hidden, 1),
+        )
+
+    def forward(self, delev):
+        """delev: signed Δelevation per edge [E] -> gate [E] in (0,1]."""
+        d = delev / self.scale
+        feats = torch.stack([d, d.abs(), torch.sign(delev)], dim=1)   # [E, 3]
+        rate = F.softplus(self.rate_mlp(feats)).squeeze(1)            # [E] >= 0
+        return torch.exp(-d.abs() * rate)                            # g(0)=1
+
+
+class DrainageGate(nn.Module):
+    """Convection gate: directional drainage g_C(Δelev, w_A) in (0,1].
+
+    Cold-air/pollutant drainage runs DOWNHILL, preferentially when the wind blows
+    that way. The decay rate reads the height gap AND the wind alignment w_A =
+    cos(wind_dir - edge_bearing), plus their interaction w_A*sign(Δ) -- so downslope
+    (Δ<0) transport that is also downwind can be damped at a different (lower) rate
+    than upslope transport, modelling downslope drainage distinctly from upslope.
+    With wind off (w_A=None) it degrades gracefully to a Δ-only drainage gate.
+    """
+
+    def __init__(self, scale: float = 200.0, hidden: int = 16):
+        super().__init__()
+        self.scale = scale
+        # base features [Δ/s, |Δ|/s, sign(Δ)] (+2 wind features when w_A is given).
+        # Two input heads so the same module works with or without wind, without
+        # retraining a different shape: a zero wind-alignment reproduces the base.
+        self.rate_mlp = nn.Sequential(
+            nn.Linear(5, hidden), nn.ReLU(),
+            nn.Linear(hidden, 1),
+        )
+
+    def forward(self, delev, wind_align=None):
+        """delev [E] signed; wind_align [E] in [-1,1] or None -> gate [E] in (0,1]."""
+        d = delev / self.scale
+        sign = torch.sign(delev)
+        if wind_align is None:
+            wa = torch.zeros_like(d)
+        else:
+            wa = wind_align
+        feats = torch.stack([d, d.abs(), sign, wa, wa * sign], dim=1)  # [E, 5]
+        rate = F.softplus(self.rate_mlp(feats)).squeeze(1)            # [E] >= 0
+        return torch.exp(-d.abs() * rate)                            # g(0)=1
+
+
 # ---------------------------------------------------------------------------
 # demo
 # ---------------------------------------------------------------------------

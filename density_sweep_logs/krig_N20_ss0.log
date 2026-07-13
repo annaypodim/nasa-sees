@@ -1,0 +1,27 @@
+[repro] city=fresno_dense_abc wind=zero hidden=16 layers=4 epochs=120 elev_feat=False elev_gate=False temp_gate=False
+[preprocess] despike: masked 694/70824 spike cells (0.98%) > 6 robust-sigma from a 13h rolling median -> treated as not observed
+[preprocess] spatial-qa: masked 57/70824 cells (0.08%) > 8 cross-sensor robust-z from the hourly network median -> not observed
+[preprocess] masked 0/70824 implausible cells (0.00%) outside [0, 500] ug/m3 -> treated as not observed
+[preprocess] sensors: 24 -> 22 kept  (threshold=40% yearly coverage)
+[preprocess] dropped full-year duds (coverage): [('18625', 0.0), ('124099', 0.356)]
+[preprocess] observed cells: 58411/64922 (90.0%) -> only these can enter the loss; the rest are filled inputs (zero), never targets
+[wind] source=zero -> convection inert (distance only)
+[subsample] density sweep -> kept 20 sensors (subsample_seed=0)
+[graph] set='urban'  nodes=20  edges=130  timesteps=2951  has_wind=False  has_temp=False
+[warn] STRICT_INPUTS off: wind is missing -> zero-filled (convection runs on distance only)
+  seed 0: OURS mae=3.387 rmse=5.146 r2=0.818 corr=0.907 (n=11607)   IDW mae=3.522
+  seed 1: OURS mae=2.030 rmse=3.210 r2=0.893 corr=0.946 (n=11566)   IDW mae=1.991
+  seed 2: OURS mae=3.110 rmse=4.763 r2=0.836 corr=0.921 (n=10059)   IDW mae=3.199
+  seed 3: OURS mae=2.792 rmse=4.162 r2=0.871 corr=0.947 (n=10909)   IDW mae=2.386
+  seed 4: OURS mae=4.205 rmse=6.974 r2=0.690 corr=0.880 (n=9887)   IDW mae=3.053
+  seed 5: OURS mae=3.266 rmse=4.417 r2=0.878 corr=0.945 (n=8632)   IDW mae=3.206
+  seed 6: OURS mae=2.993 rmse=4.326 r2=0.831 corr=0.920 (n=11556)   IDW mae=3.304
+  seed 7: OURS mae=3.398 rmse=5.772 r2=0.745 corr=0.881 (n=9763)   IDW mae=2.678
+
+====================================================================
+INDUCTIVE KRIGING  city=fresno_dense_abc  split(train/val/test)=(14, 2, 4)  seeds=[0, 1, 2, 3, 4, 5, 6, 7]
+====================================================================
+OURS (GraPhyNet)      MAE=3.147±0.576  RMSE=4.846  R2=0.820  corr=0.918
+IDW baseline          MAE=2.917±0.487  RMSE=4.435  R2=0.851  corr=0.932
+GraPhy (paper)        MAE=2.380   (Fresno, 41 sensors, Oct23-Jan24)
+====================================================================

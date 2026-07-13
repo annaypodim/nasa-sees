@@ -1,0 +1,22 @@
+[faithful] city=fresno_dense_abc wind=hrrr config=small (hidden=128 layers=3) steps=4000 batch=32 lr=0.0001
+[preprocess] despike: masked 694/70824 spike cells (0.98%) > 6 robust-sigma from a 13h rolling median -> treated as not observed
+[preprocess] spatial-qa: masked 57/70824 cells (0.08%) > 8 cross-sensor robust-z from the hourly network median -> not observed
+[preprocess] masked 0/70824 implausible cells (0.00%) outside [0, 500] ug/m3 -> treated as not observed
+[preprocess] sensors: 24 -> 22 kept  (threshold=40% yearly coverage)
+[preprocess] dropped full-year duds (coverage): [('18625', 0.0), ('124099', 0.356)]
+[preprocess] observed cells: 58411/64922 (90.0%) -> only these can enter the loss; the rest are filled inputs (zero), never targets
+[wind] 9/22 sensors missing wind files -> zero wind at those nodes: ['119225', '134022', '15189', '189863', '37111', '39049', '63119', '7284', '80125']
+[wind] source=HRRR 3km (/Users/annaypodimatopoulou/Code/side_quests/nasa-sees/.claude/worktrees/implement-graphy/data/fresno/wind_hrrr)
+[graph] set='urban'  nodes=22  edges=142  timesteps=2951  has_wind=True  has_temp=False
+  seed 2: OURS mae=3.619 rmse=5.127 r2=0.810 corr=0.903 (n=13393)   IDW mae=2.962   w(D,C,L)=(0.33,0.33,0.34)  best@3000(val 4.70)
+
+========================================================================
+FAITHFUL GraPhy  city=fresno_dense_abc  config=small  split(tr/val/te)=(15, 2, 5)  seeds=[2]  (915s)
+========================================================================
+FAITHFUL GraPhy     MAE=3.619+-0.000  RMSE=5.127  R2=0.810+-0.000  corr=0.903
+IDW baseline        MAE=2.962+-0.000  RMSE=4.624  R2=0.845+-0.000  corr=0.923
+repo best (ref)     MAE=3.054+-0.29 (IDW-residual scaffold, wind zero)
+GraPhy (paper)      MAE=2.380   (Fresno, 41 sensors, Oct23-Jan24)
+mean fusion weight  w_D(diffusion)=0.327  w_C(convection)=0.335  w_L(local)=0.338
+diverged seeds: 0/1  (plain MSE stable)
+========================================================================
