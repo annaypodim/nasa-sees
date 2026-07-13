@@ -50,7 +50,7 @@ from __future__ import annotations
 import torch
 import torch.nn as nn
 
-from src.model.elevation import ElevationGate   # reused verbatim from the IDW+corr model
+from src.model.elevation import ElevationGate, TerrainGate, DrainageGate
 
 
 def _mlp(in_dim: int, out_dim: int, hidden: int) -> nn.Sequential:
@@ -153,26 +153,39 @@ class Fusion(nn.Module):
 # ONE GraPhy LAYER
 # ---------------------------------------------------------------------------
 class GraPhyLayer(nn.Module):
-    def __init__(self, in_dim: int, edge_in: int, dim: int, use_elev_gate: bool = False):
+    def __init__(self, in_dim: int, edge_in: int, dim: int, gate_mode: str = "none"):
         super().__init__()
         self.diffusion  = DiffusionModule(in_dim, dim)
         self.convection = ConvectionModule(in_dim, edge_in, dim)
         self.local      = LocalModule(in_dim, dim)
         self.fusion     = Fusion(dim)
-        # OPTIONAL elevation gate (NOT part of faithful GraPhy; imported from the
-        # IDW+corr model). Per-layer, own learned uphill/downhill height scales.
-        # Gates diffusion (via a rebuilt gated Laplacian) + convection (message);
-        # local + the fusion update stay ungated -- same wiring as src/model/model.py.
-        self.elev_gate = ElevationGate() if use_elev_gate else None
+        # OPTIONAL elevation gating (NOT part of faithful GraPhy). Per-layer.
+        #   "elev"    -> the original two-scalar ElevationGate, SHARED by diffusion
+        #                & convection (byte-identical to the prior use_elev_gate path).
+        #   "terrain" -> a LEARNED per-edge TerrainGate on diffusion + a directional
+        #                DrainageGate on convection (couples Δelev sign with wind).
+        # In every mode the local branch and the fusion update stay ungated.
+        self.gate_mode = gate_mode
+        self.elev_gate = ElevationGate() if gate_mode == "elev" else None
+        self.diff_gate = TerrainGate() if gate_mode == "terrain" else None
+        self.conv_gate = DrainageGate() if gate_mode == "terrain" else None
 
     def forward(self, x, L_D, edge_index, edge_weight, edge_feat, gate_ctx=None):
         edge_gate = None
-        if self.elev_gate is not None and gate_ctx is not None:
-            ei_s, ew_s, delev_s, N, B = gate_ctx           # single-graph structures
-            g = self.elev_gate(delev_s)                    # [E] per-edge gate in (0,1]
-            L_D_single = build_L_D(ei_s, ew_s * g, N)      # diffusion reads the gate here
+        if self.gate_mode != "none" and gate_ctx is not None:
+            # gate_ctx = single-graph structures + the batch's per-edge wind alignment.
+            ei_s, ew_s, delev_s, wind_align, N, B = gate_ctx
+            if self.gate_mode == "elev":
+                gd = self.elev_gate(delev_s)               # [E] shared gate
+                edge_gate = gd.repeat(B)                   # convection: same gate, batched
+            else:  # "terrain"
+                gd = self.diff_gate(delev_s)               # [E] learned diffusion gate
+                # convection drainage gate is per (edge, batch example): the wind
+                # alignment varies by hour, so it is already [B*E] (or [E] when B=1).
+                delev_b = delev_s.repeat(B)                # [B*E] matches wind_align
+                edge_gate = self.conv_gate(delev_b, wind_align)
+            L_D_single = build_L_D(ei_s, ew_s * gd, N)     # diffusion reads its gate here
             L_D = torch.block_diag(*([L_D_single] * B))    # override the passed L_D
-            edge_gate = g.repeat(B)                        # convection reads it as a message gate
         x_D = self.diffusion(x, L_D)
         x_C, e_next = self.convection(x, edge_index, edge_feat, edge_gate)
         x_L = self.local(x, edge_index, edge_weight)       # local: ungated
@@ -187,20 +200,21 @@ class GraPhyLayer(nn.Module):
 # ---------------------------------------------------------------------------
 class GraPhyFaithful(nn.Module):
     def __init__(self, node_in: int, edge_in: int, hidden: int = 512, layers: int = 5,
-                 use_elev_gate: bool = False):
+                 gate_mode: str = "none"):
         super().__init__()
         dims_in = [node_in] + [hidden] * (layers - 1)   # layer 1 takes node_in, rest hidden
         edges_in = [edge_in] + [hidden] * (layers - 1)  # convection edge feat evolves to `hidden`
         self.layers = nn.ModuleList(
-            GraPhyLayer(dims_in[k], edges_in[k], hidden, use_elev_gate) for k in range(layers)
+            GraPhyLayer(dims_in[k], edges_in[k], hidden, gate_mode) for k in range(layers)
         )
         self.head = nn.Linear(hidden, 1)                # final node feature -> PM2.5
 
     def forward(self, x, L_D, edge_index, edge_weight, edge_feat, return_weights=False,
                 gate_ctx=None):
-        # gate_ctx=(edge_index_single, edge_weight_single, edge_delev, N, B) enables the
-        # per-layer elevation gate (rebuilds L_D from gated weights). None -> ungated,
-        # and the passed static L_D is used verbatim (identical to the base faithful model).
+        # gate_ctx=(edge_index_single, edge_weight_single, edge_delev, wind_align, N, B)
+        # enables the per-layer elevation gating (rebuilds L_D from gated weights;
+        # wind_align feeds the terrain-mode drainage gate). None -> ungated, and the
+        # passed static L_D is used verbatim (identical to the base faithful model).
         e = edge_feat
         ws = []
         for layer in self.layers:

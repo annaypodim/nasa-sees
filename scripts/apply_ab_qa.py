@@ -87,6 +87,13 @@ def main() -> None:
     ap = argparse.ArgumentParser(description="A/B channel QA -> cleaned Fresno set")
     ap.add_argument("--out-name", default="fresno_dense_ab",
                     help="output city dir under data/ (default fresno_dense_ab)")
+    ap.add_argument("--src", default="fresno_dense",
+                    help="input city dir under data/ with the canonical pm2.5_atm/cf_1/"
+                         "humidity CSVs (default fresno_dense)")
+    ap.add_argument("--ab", default="fresno_ab",
+                    help="input city dir under data/ with the raw pm2.5_atm_a/_b channels. "
+                         "If equal to --src (combined fetch: a/b live in the same CSV), the "
+                         "channels are read from the src file directly (default fresno_ab)")
     ap.add_argument("--frac-max", type=float, default=FRAC_MAX,
                     help="drop a sensor if this fraction of joint cells disagree "
                          "(set 1.0 to disable -> drop only on low A/B correlation)")
@@ -100,19 +107,22 @@ def main() -> None:
                     help="min corr(healthy channel, city-median PM) to recover a sensor "
                          "as single-channel (default 0.85)")
     args = ap.parse_args()
+    src_dir = DATA / args.src
+    combined = args.ab == args.src  # a/b channels live in the same CSV as the canonical
     out_dir = DATA / args.out_name
-    src_pm = SRC / "pm25" / GROUP
-    ab_pm = AB / "pm25" / GROUP
+    src_pm = src_dir / "pm25" / GROUP
+    ab_pm = (DATA / args.ab) / "pm25" / GROUP
     out_pm = out_dir / "pm25" / GROUP
     if not src_pm.exists():
         raise SystemExit(f"missing {src_pm}")
-    if not ab_pm.exists():
+    if not combined and not ab_pm.exists():
         raise SystemExit(f"missing {ab_pm} (run fetch --ab-channels first)")
     if out_pm.exists():
         shutil.rmtree(out_pm)
     out_pm.mkdir(parents=True)
 
-    ab_by_id = {sid_of(f.name): f for f in ab_pm.glob("*.csv") if sid_of(f.name)}
+    ab_by_id = ({} if combined
+                else {sid_of(f.name): f for f in ab_pm.glob("*.csv") if sid_of(f.name)})
     kept_ids, dropped, recovered, total_cells, total_bad = [], [], [], 0, 0
 
     # City-median PM signal: robust consensus used to decide WHICH laser channel of a
@@ -135,14 +145,22 @@ def main() -> None:
         if sid is None:
             continue
         df = pd.read_csv(f)
-        abf = ab_by_id.get(sid)
-        if abf is None:
-            # no channel data (e.g. an empty sensor) -> keep as-is, can't A/B-check it
-            df.to_csv(out_pm / f.name, index=False)
-            kept_ids.append(sid)
-            continue
-        ab = pd.read_csv(abf)[["time_stamp", "pm2.5_atm_a", "pm2.5_atm_b"]]
-        m = df.merge(ab, on="time_stamp", how="left")
+        if combined:
+            if "pm2.5_atm_a" not in df.columns or "pm2.5_atm_b" not in df.columns:
+                # no channel data (e.g. an empty sensor) -> keep as-is, can't A/B-check it
+                df.to_csv(out_pm / f.name, index=False)
+                kept_ids.append(sid)
+                continue
+            m = df
+        else:
+            abf = ab_by_id.get(sid)
+            if abf is None:
+                # no channel data (e.g. an empty sensor) -> keep as-is, can't A/B-check it
+                df.to_csv(out_pm / f.name, index=False)
+                kept_ids.append(sid)
+                continue
+            ab = pd.read_csv(abf)[["time_stamp", "pm2.5_atm_a", "pm2.5_atm_b"]]
+            m = df.merge(ab, on="time_stamp", how="left")
         a, b = m["pm2.5_atm_a"], m["pm2.5_atm_b"]
         both = a.notna() & b.notna()
         n_both = int(both.sum())
@@ -190,7 +208,7 @@ def main() -> None:
         total_cells += n_both
         total_bad += n_bad
 
-    coords = parse_coords(SRC / "coords" / "sensor_lat_long_alt")
+    coords = parse_coords(src_dir / "coords" / "sensor_lat_long_alt")
     coords = {sid: coords[sid] for sid in kept_ids if sid in coords}
     write_coords(coords, out_dir / "coords" / "sensor_lat_long_alt")
 

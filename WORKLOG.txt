@@ -1183,3 +1183,54 @@ KEY CONTRAST WITH FRESNO: on flat Fresno the faithful model is ~1.9x IDW and the
 CONCLUSION: the faithful GraPhy architecture is SOUND -- competitive with IDW on terrain,
   and the elevation gate is a real, transferable lever there. Its Fresno underperformance
   is data (raw calibration + too few good sensors), not the model.
+
+===============================================================================
+SESSION 2026-07-12 (cont.): Path A density fetch + Track 1/2 model additions
+===============================================================================
+PATH A (match GraPhy's 41-sensor density on Fresno):
+  * Re-fetched the tight box (36.90,-119.92,36.60,-119.58) with LIVE credits,
+    --extra-fields --ab-channels --min-spacing-km 0 -> data/fresno_full. The 12
+    sensors that were empty stubs after last session's HTTP-402 came back EMPTY
+    AGAIN (0 rows) => they are genuinely dead for Oct'23-Jan'24, not fetch fails.
+    Usable stays 31/43. Gain: a/b channels now in-file on ALL sensors.
+  * A/B QA on the full set (apply_ab_qa.py --src fresno_full --ab fresno_full):
+    34 kept / 9 dropped -> 22 usable -> 20 nodes after coverage. IDW floor 3.38.
+  * WIDER box 37.00,-120.05,36.50,-119.45 (53 listed, 228 m alt spread) supplement
+    fetch (--exclude-existing data/fresno_full -> only 10 NEW downloads) + copied
+    the 43 existing CSVs in -> data/fresno_med. 35 usable; A/B QA -> 25 usable ->
+    23 nodes. **IDW floor 2.833 +- 0.433** (best network yet; 1.19x off 2.38).
+  * CONCLUSION (now with fully re-fetched a/b-QA'd data): 2.38 is BELOW this
+    network's IDW floor -> unreachable by ANY interpolator here. Density, not the
+    model, is the wall. GraPhy's 41 live packed sensors don't exist in this
+    bbox/window; the wider box lowers the floor to 2.83 but adds foothill spread.
+  * apply_ab_qa.py generalised: added --src/--ab (combined-file fetches read a/b
+    from the same CSV). build_graph2 CITY_CONFIG += fresno_full, fresno_full_abc,
+    fresno_med, fresno_med_abc (all wind_hrrr_dir=data/fresno/wind_hrrr).
+  * Main run launched: CITY=fresno_med_abc EPA=1 WIND=hrrr large 4000, 8 seeds
+    (waves of 4). SLOW (~1.5-2 hr/wave). [result pending at handoff]
+
+TRACK 1 (make OUR GraPhy beat the paper via a better elevation gate) -- DONE+smoked:
+  * src/model/elevation.py += TerrainGate (diffusion) and DrainageGate (convection).
+    Both keep the exp ENVELOPE so g(0)=1 exactly (no self-damping, stays in (0,1])
+    but the DECAY RATE is a learned MLP of the edge terrain:
+      TerrainGate:  rate = softplus(MLP([Δ/s, |Δ|/s, sign]))  -> g=exp(-|Δ|/s*rate)
+      DrainageGate: rate = softplus(MLP([Δ/s,|Δ|/s,sign, w_A, w_A*sign]))  (directional)
+    w_A = cos(wind_dir-bearing): the w_A*sign(Δ) interaction lets downslope-downwind
+    transport damp at a different rate than upslope => drainage modelled along wind.
+  * graphy_faithful.py: use_elev_gate -> gate_mode {none|elev|terrain}; terrain mode
+    uses the two new gates (diffusion via rebuilt gated L_D, convection via message
+    gate). gate_ctx now carries per-edge wind alignment. NEW flag: --terrain-gate.
+    Ungated path byte-identical; --elev-gate (old 2-scalar) preserved for A/B.
+
+TRACK 2 (hybrid: bolt the FAITHFUL physics modules onto an IDW prior) -- DONE+smoked:
+  * eval_graphy_faithful.py NEW flags --idw-prior [--idw-prior-elev --idw-prior-h].
+    pred_z = idw_prior_z(t, visible) + faithful_GraPhy_correction. z-space IDW over
+    visible observed nodes (masked target joins hidden per training example -> no
+    leak). Structural floor: correction=0 recovers IDW exactly. --idw-prior-elev adds
+    terrain kernel exp(-|Δelev|/h) to the prior (inert on flat, valley-aware on SLC).
+    Smoke @3 steps: fresno OURS 3.50 / IDW 2.72 corr .942 (vs pure-faithful 12.7 /
+    .035) -> the prior anchors it near the floor as designed; train the residual down.
+
+NEXT: (a) read wave-1 result of the fresno_med_abc large run; (b) benchmark
+  --terrain-gate on SLC (8 seeds) vs base + old --elev-gate; (c) benchmark
+  --idw-prior (+/- elev, +/- terrain-gate) on fresno_med_abc AND slc vs IDW & GraPhy.

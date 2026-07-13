@@ -1,0 +1,5 @@
+[run] config=large steps=4000 maxpar=4 city=fresno_med_abc epa=1 seeds=(0 1 2 3 4 5 6 7) -> faithful_logs/large_4000_fresno_med_abc_epa
+[run] launched seed 0 (pid 59903)
+[run] launched seed 1 (pid 59904)
+[run] launched seed 2 (pid 59905)
+[run] launched seed 3 (pid 59906)

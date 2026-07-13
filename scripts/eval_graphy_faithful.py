@@ -77,18 +77,58 @@ def run_seed(seed, graph, args):
     # rescaled normalised Laplacian: static adjacency -> computed ONCE per graph.
     L_D = build_L_D(edge_index, edge_weight, N)
 
+    # ---- HYBRID IDW PRIOR (Track 2): pred = idw_prior + faithful correction ------
+    # z-space inverse-distance interpolation over the VISIBLE observed nodes each
+    # hour; the faithful model then predicts a residual on top. If the residual is 0
+    # we recover IDW exactly, so the hybrid structurally cannot underperform IDW.
+    # Optional terrain-aware kernel exp(-|Delta elev|/h) (inert on flat ground).
+    Wmat = None
+    if args.idw_prior:
+        dmat = np.hypot(x_m[:, None] - x_m[None, :], y_m[:, None] - y_m[None, :])
+        w = 1.0 / (dmat + 1.0)
+        if args.idw_prior_elev:
+            e = np.asarray(elev, dtype=np.float64)
+            de = np.abs(e[:, None] - e[None, :])
+            w = w * np.exp(-de / max(args.idw_prior_h, 1.0))
+        np.fill_diagonal(w, 0.0)
+        Wmat = torch.tensor(w, dtype=torch.float)
+
+    def idw_prior_z(t, hidden_bool):
+        """z-space IDW over nodes observed at t AND visible (not in hidden_bool)."""
+        vis = (obs_t[t] & ~hidden_bool).float()          # [N]
+        num = Wmat @ (z_t[t] * vis)
+        den = (Wmat @ vis).clamp(min=1e-9)
+        return num / den                                 # [N] in z-space
+
+    # val+test are never-visible inputs -> the base hidden set for the IDW prior.
+    hidden_base_bool = torch.zeros(N, dtype=torch.bool)
+    hidden_base_bool[hidden_input] = True
+
     cfg = CONFIGS[args.config]
-    use_gate = args.elev_gate
+    # gate mode: terrain (new learned gates) > elev (old two-scalar gate) > none.
+    gate_mode = "terrain" if args.terrain_gate else ("elev" if args.elev_gate else "none")
+    use_gate = gate_mode != "none"
     model = GraPhyFaithful(node_in=1, edge_in=edge_attr_t.shape[-1],
                            hidden=cfg["hidden"], layers=cfg["layers"],
-                           use_elev_gate=use_gate)
+                           gate_mode=gate_mode)
     opt = torch.optim.Adam(model.parameters(), lr=args.lr, betas=(0.9, 0.999))
     loss_fn = torch.nn.MSELoss()   # plain MSE, in ug/m3 (see below)
 
-    # elevation-gate context: single-graph structures the gated layers rebuild L_D from.
-    # None when the gate is off -> the model uses the passed static L_D unchanged.
-    def gctx(B):
-        return (edge_index, edge_weight, edge_delev, N, B) if use_gate else None
+    # terrain-mode drainage gate reads per-edge wind alignment w_A = edge_attr col 1
+    # (cos(wind_dir - bearing)); only meaningful with real wind. When off, the gate
+    # degrades to a Δelev-only drainage gate (wind_align=None).
+    WIND_ALIGN_COL = 1
+    directional = (gate_mode == "terrain" and has_wind
+                   and edge_attr_t.shape[-1] > WIND_ALIGN_COL)
+
+    # elevation-gate context: single-graph structures the gated layers rebuild L_D
+    # from, plus the batch's per-edge wind alignment for the drainage gate. `ef` is
+    # the current (possibly batched) edge-feature tensor; None -> gate off.
+    def gctx(B, ef=None):
+        if not use_gate:
+            return None
+        wa = ef[:, WIND_ALIGN_COL] if (directional and ef is not None) else None
+        return (edge_index, edge_weight, edge_delev, wa, N, B)
 
     def to_ug(zval):  # linear inverse of the standardisation
         return zval * sigma + mu
@@ -135,7 +175,10 @@ def run_seed(seed, graph, args):
             for t in val_ts:
                 t = int(t)
                 out = model(node_input(t), None if use_gate else L_D, edge_index,
-                            edge_weight, edge_attr_t[t], gate_ctx=gctx(1))[:, 0]
+                            edge_weight, edge_attr_t[t],
+                            gate_ctx=gctx(1, edge_attr_t[t]))[:, 0]
+                if args.idw_prior:
+                    out = out + idw_prior_z(t, hidden_base_bool)
                 for node in val_idx:
                     if obs[t, node]:
                         err.append(abs(to_ug(out[node].item()) - values[t, node]))
@@ -159,6 +202,7 @@ def run_seed(seed, graph, args):
         efb = torch.empty(B * E, edge_attr_t.shape[-1])
         tgt_nodes = np.empty(B, dtype=np.int64)
         trues_ug = np.empty(B, dtype=np.float64)
+        prior_b = torch.zeros(B * N) if args.idw_prior else None
         for b, t in enumerate(ts_batch):
             t = int(t)
             target = int(rng.choice(obs_train[t]))    # mask exactly ONE train sensor
@@ -167,8 +211,14 @@ def run_seed(seed, graph, args):
             efb[b * E:(b + 1) * E] = edge_attr_t[t]
             tgt_nodes[b] = b * N + target
             trues_ug[b] = values[t, target]
+            if args.idw_prior:
+                # the masked target joins val/test in the hidden set for THIS example
+                hb = hidden_base_bool.clone(); hb[target] = True
+                prior_b[b * N:(b + 1) * N] = idw_prior_z(t, hb)
         out = model(xb, L_D_b_static, torch.from_numpy(eib), ew_b, efb,
-                    gate_ctx=gctx(B))[:, 0]
+                    gate_ctx=gctx(B, efb))[:, 0]
+        if args.idw_prior:
+            out = out + prior_b                       # residual on the IDW floor
         pred = to_ug(out[torch.from_numpy(tgt_nodes)])
         true = torch.tensor(trues_ug, dtype=torch.float)
         loss = loss_fn(pred, true)                    # MSE in raw ug/m3
@@ -203,8 +253,11 @@ def run_seed(seed, graph, args):
                 continue
             x = node_input(t)             # only test/val masked; train all visible
             out, ws = model(x, None if use_gate else L_D, edge_index, edge_weight,
-                            edge_attr_t[t], return_weights=True, gate_ctx=gctx(1))
+                            edge_attr_t[t], return_weights=True,
+                            gate_ctx=gctx(1, edge_attr_t[t]))
             pred_z = out[:, 0]
+            if args.idw_prior:
+                pred_z = pred_z + idw_prior_z(t, hidden_base_bool)
             for node in test_idx:
                 if obs[t, node]:
                     trues.append(values[t, node])
@@ -246,6 +299,21 @@ def main():
                     help="add the elevation gate from the IDW+corr model (per-layer, gates "
                          "diffusion+convection by signed Delev). NOT faithful GraPhy; only "
                          "meaningful on terrain (SLC). Needs coords with real altitude.")
+    ap.add_argument("--terrain-gate", action="store_true",
+                    help="LEARNED terrain gating (per-layer): a TerrainGate with a Delev-"
+                         "dependent decay rate on diffusion + a directional DrainageGate on "
+                         "convection (couples Delev sign with wind alignment). Supersedes "
+                         "--elev-gate when both set. Terrain cities (SLC); needs real altitude.")
+    ap.add_argument("--idw-prior", action="store_true",
+                    help="HYBRID: add a z-space IDW interpolation prior to the model output "
+                         "(pred = idw_prior + faithful_GraPhy_correction). The physics modules "
+                         "become a residual corrector over the interpolation floor -> structurally "
+                         "cannot do worse than IDW, and aims to beat both IDW and vanilla GraPhy.")
+    ap.add_argument("--idw-prior-elev", action="store_true",
+                    help="make the IDW prior terrain-aware: weight *= exp(-|Delta elev|/h) so it "
+                         "interpolates within a valley/airmass, not across ridges (SLC). Inert on flat.")
+    ap.add_argument("--idw-prior-h", type=float, default=200.0,
+                    help="vertical decay length h (m) for --idw-prior-elev (default 200)")
     ap.add_argument("--track", action="store_true", help="print the training-loss trajectory")
     args = ap.parse_args()
 
