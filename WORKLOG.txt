@@ -1748,3 +1748,64 @@ STATUS: K-fold was the last rigor gap (flagged repeatedly). Now closed. Headline
 is publication-clean: a physics-GNN with terrain-mean prior + temporal memory
 beats a strong spatiotemporal-kriging baseline by 2-10% across 3 cities x 2 gap
 lengths, winning every one of 30 CV folds.
+
+================================================================================
+2026-07-13 (K) -- DEPLOY-OR-NOT DIAGNOSTIC (the a-priori decision rule / novelty)
+================================================================================
+BUILT: scripts/diagnostic.py. Computes LABEL-FREE statistics of each city's
+OBSERVED network (no training, no held-out labels) and regresses the realized
+5-fold-CV margin (OURS vs ST-kriging, section I) on each. Goal: an a-priori number
++ threshold telling a practitioner whether the GNN correction is worth training,
+BEFORE training it -- the quantitative version of the IGNNK "richer field -> GNN
+wins more" claim, which the literature only states qualitatively.
+
+RESULT (6 city x gap cells; positive = GNN beats strong ST-kriging baseline):
+  predictor       R2     Spearman   deploy-when      note
+  spatial_nrmse   0.902   0.829      > 0.523          LOO-IDW error / field std
+  mean_nn_km      0.900  -1.000      < 3.74 km        sensor spacing (density)
+  density         0.689   0.829      > 0.28 nodes/km2
+  vario_h         0.614  -0.886      (gap axis)       temporal drift over horizon
+  rho_h/richness  ~0      weak
+BEST a-priori predictor = spatial_nrmse (leave-one-out IDW error normalised by
+field std = "spatial interpolation headroom"): improvement% ~= 27.7*nrmse - 14.5,
+crossover nrmse ~ 0.52. Pgh 0.862 -> +8-10%, Fresno 0.739 -> +6-7%, SLC 0.628 ->
++2-3%. Monotone, clean. Mechanism: the GNN earns its keep in proportion to how much
+of the field plain spatial interpolation CANNOT explain (headroom), not density per
+se. The small within-city 24h->48h drop is carried by temporal drift (vario_h).
+
+HONEST LIMITATION: only 3 distinct networks (cities) -> the strong predictors are
+city-level; R2~0.9 across 6 points is inflated by within-city ties (n_effective~3).
+This is SUGGESTIVE, not yet a law. To make it a defensible contribution it needs
+more network points: subsample each city to ~5 densities x 3 cities = ~15 networks,
+recompute (spatial_nrmse, margin) per sub-network. NEXT.
+NOVELTY VERDICT: the diagnostic (a-priori label-free predictor + numeric deploy
+threshold for air-quality GNN imputation) is genuinely not in the literature; the
+current n=3 evidence is preliminary. Method novel, evidence needs densifying.
+
+--------------------------------------------------------------------------------
+(K2) DENSIFIED DIAGNOSTIC -- the honesty check that DEFLATED the clean fit
+--------------------------------------------------------------------------------
+BUILT scripts/run_temporal_density.py (+ eval_temporal --max-nodes/--subsample-seed):
+subsample each city to several densities x 2 seeds -> 18 DISTINCT networks, each with
+its own a-priori spatial_nrmse and realized 5-fold margin (gap 24h, winning config).
+experiments/logs/diagnostic/density_points.csv.
+
+RESULT (spatial_nrmse -> margin%, refit as points accumulated):
+    6 city-cells   : R2=0.90  crossover nrmse~0.52   <- OVER-OPTIMISTIC (n_eff~3)
+    12 networks    : R2=0.65  crossover~0.52
+    18 networks    : R2=0.385 Spearman 0.59 crossover~0.38   <- HONEST NUMBER
+The clean R2=0.90 was an ARTIFACT of only 3 city-level points. At the true network
+level spatial_nrmse is a REAL but NOISY predictor: it orders the sparse-terrain SLC
+regime (nrmse 0.64-0.82, margin 3.5-6%) below the flatter/denser Pgh+Fresno (nrmse
+0.76-1.02, margin 3.5-11%), but does NOT finely separate Pgh from Fresno, and Fresno
+subsamples scatter hard (same nrmse -> margin 3.5 vs 8.7). Part of the scatter is
+y-noise: small subsamples (esp. SLC winter-inversion, ours_mae up to 8.3) have high
+fold variance.
+HONEST VERDICT: the DIRECTION holds (positive slope, all 18/18 nets still beat
+ST-kriging, city ordering correct) but the DEPLOY THRESHOLD is loosely constrained
+(0.38-0.52 depending on sample) and per-network R2~0.4. So: a genuine trend + an
+a-priori predictor, NOT a precise law. Also every tested net sits ABOVE the fitted
+crossover and WINS -> we have not yet OBSERVED a temporal-task network that loses,
+so the threshold is an extrapolation. To harden it we'd need a genuinely smoother/
+denser net (low headroom) that actually crosses zero. Densifying was the right call:
+it stopped us putting an inflated R2=0.90 on the poster.

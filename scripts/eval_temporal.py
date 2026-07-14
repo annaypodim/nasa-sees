@@ -335,6 +335,13 @@ def main():
     ap.add_argument("--elev-gate", action="store_true")
     ap.add_argument("--elev-kernel", action="store_true")
     ap.add_argument("--elev-kernel-h", type=float, default=150.0)
+    ap.add_argument("--max-nodes", type=int, default=None,
+                    help="density-sweep: randomly thin the network to this many sensors "
+                         "BEFORE edges/kriging are built (kNN + IDW recomputed on the "
+                         "sparser subset). Deterministic in --subsample-seed. Used by "
+                         "scripts/run/run_temporal_density.sh to densify the diagnostic.")
+    ap.add_argument("--subsample-seed", type=int, default=0,
+                    help="which random node subset to keep when --max-nodes is set")
     ap.add_argument("--rk-spatial", action="store_true",
                     help="use the RK-elev (elevation-drift regression-kriging) spatial "
                          "prior instead of plain spatial IDW. Combines the terrain-mean "
@@ -344,6 +351,7 @@ def main():
 
     bg.use_city(args.city); bg.SENSOR_SET = args.sensor_set; bg.EPA_CORRECT = True
     tr.WIND_SOURCE = args.wind; tr.STRICT_INPUTS = (args.wind != "zero"); tr.USE_CACHE = False
+    tr.SUBSAMPLE_N = args.max_nodes; tr.SUBSAMPLE_SEED = args.subsample_seed
     print(f"[temporal] city={args.city} gap_len={args.gap_len} n_gaps={args.n_gaps} "
           f"temporal={args.temporal} temp_gate={args.temp_gate} aod={args.aod_feature}")
     graph = tr.build_static_graph()
