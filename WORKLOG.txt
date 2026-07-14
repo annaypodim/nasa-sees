@@ -1809,3 +1809,103 @@ crossover and WINS -> we have not yet OBSERVED a temporal-task network that lose
 so the threshold is an extrapolation. To harden it we'd need a genuinely smoother/
 denser net (low headroom) that actually crosses zero. Densifying was the right call:
 it stopped us putting an inflated R2=0.90 on the poster.
+
+================================================================================
+2026-07-14 (J) TEMPORAL COVARIATE TEST -- temp / AOD / wind
+================================================================================
+QUESTION. Time-varying covariates (temperature, AOD, wind) were shown DEAD on the
+memoryless SPATIAL task (§ earlier): their variance is common-mode across a metro at
+a single hour (spatial std ~1% of temporal std). HYPOTHESIS: on the TEMPORAL gap-fill
+task -- where a sensor is dark 24-48h and its own carry-forward persistence goes stale
+-- a covariate that varies in TIME could carry signal the persistence+kriging prior
+misses. Tested rigorously, paired, on top of §I's strongest model.
+
+BASELINE (the model to add to) = --temporal --rk-spatial --wind hrrr under 5-fold CV:
+    prior = b*persistence + (1-b)*RK-elev(elevation-drift kriging);  pred = prior + GNN.
+    Prior-only prediction = the ST-kriging baseline (honest space+time floor).
+
+DATA-AVAILABILITY LIMIT (verified in build_graph2 CITY_CONFIG, NOT assumed):
+    - TEMPERATURE (--temp-gate) and AOD (--aod-feature): ONLY pittsburgh has temp_dir/
+      temp_zip + aod_csv. slc and fresno have NEITHER. So temp/AOD verdicts rest on
+      1 city x 2 gaps. (build_static_graph: has_temp True only for pittsburgh; AOD via
+      bg.load_aod -> 59/59 sensors, 33% of cells have a retrieval, rest gap-filled.)
+    - WIND: HRRR wind exists for all 3 cities -> wind tested on all 3 (hrrr vs zero).
+
+COMMANDS (all --sensor-set urban --wind hrrr --temporal --rk-spatial --kfold 5,
+epochs=120, hidden=16, layers=4 -- identical to §I so numbers are comparable):
+    # driver (paired, same folds+seeds; only the covariate flag differs per variant):
+    PYTHONPATH=. .venv/bin/python scripts/run_temporal_covariates.py \
+        --city pittsburgh --wind hrrr --gap-len 24 --kfold 5 --epochs 120 \
+        --variants base,temp,aod                 # + gap-len 48
+    # wind isolation (paired per fold across the two --wind processes; folds depend
+    # only on the observed mask, identical across wind sources):
+    ... --city {pittsburgh,fresno,slc} --wind hrrr  --variants base   # + --wind zero
+    # underlying flag equivalent per fold (what run_temporal_covariates invokes):
+    scripts/eval_temporal.py --city pittsburgh --wind hrrr --temporal --rk-spatial \
+        --kfold 5 --gap-len 24 --temp-gate   (and --aod-feature)
+Full matrix: scripts/run_temporal_cov_matrix.sh -> experiments/logs/temporal_covariates/*.log
+Aggregated : scripts/aggregate_temporal_cov.py -> experiments/logs/temporal_covariates/results.csv
+
+BASELINE REPRODUCES §I EXACTLY (sanity):
+    pgh   g24 3.892 / g48 4.276   (§I 3.89 / 4.28)   fresno g24 4.163 / g48 4.751 (§I 4.16 / 4.75)
+    slc   g24 5.937 / g48 7.407   (§I 5.94 / 7.41)   -> deterministic K-fold, confirmed.
+
+RESULTS (5-fold CV; delta = OURS-with-covariate vs OURS-baseline, PAIRED; folds+ =
+folds (of 5) where the covariate LOWERED OURS MAE. For wind, "covariate" = HRRR wind
+present, baseline = --wind zero; delta<0 => wind helps):
+
+  covariate  city        gap  OURS_base  OURS_cov   ST-krig  delta      folds+/5  verdict
+  --------------------------------------------------------------------------------------
+  TEMP       pittsburgh  24h  3.892      3.893      4.322    +0.02%     2/5       null
+  TEMP       pittsburgh  48h  4.276      4.296      4.658    +0.47%     2/5       null / slight hurt
+  AOD        pittsburgh  24h  3.892      3.932      4.321    +1.01%     0/5       HURTS
+  AOD        pittsburgh  48h  4.276      4.304      4.658    +0.65%     2/5       null / hurt
+  WIND       pittsburgh  24h  3.919(z)   3.892(h)   4.322    -0.69%     4/5       tiny help
+  WIND       pittsburgh  48h  4.324(z)   4.276(h)   4.658    -1.10%     3/5       tiny help
+  WIND       fresno      24h  4.155(z)   4.163(h)   4.486    +0.20%     2/5       wash (neg)
+  WIND       fresno      48h  4.754(z)   4.751(h)   5.062    -0.07%     2/5       wash
+  WIND       slc         24h  5.929(z)   5.937(h)   6.137    +0.14%     1/5       wash (neg)
+  WIND       slc         48h  7.389(z)   7.407(h)   7.541    +0.23%     1/5       wash (neg)
+  (z)=--wind zero, (h)=--wind hrrr. OURS beats ST-kriging in every cell regardless of
+  covariate -- the covariates move OURS by <=1%, i.e. inside the §I win, never creating it.
+
+HONEST VERDICTS
+  TEMPERATURE (--temp-gate, pittsburgh only): NULL. +0.02% at 24h (learned gate leaves
+    the prediction essentially unchanged), +0.47% at 48h (slight hurt); <=2/5 folds ever
+    improve. The per-node temperature gate adds nothing the persistence+lag features and
+    RK-elev prior don't already encode. 1 city x 2 gaps (only city with temp data).
+  AOD (--aod-feature, pittsburgh only): NULL-to-HURTS. +1.01% at 24h with 0/5 folds
+    improved (unambiguous small hurt), +0.65% at 48h. The satellite AOD node feature is
+    only 33% populated (gap-filled to 0 elsewhere) and is redundant with the target's own
+    PM history; adding it injects noise. 1 city x 2 gaps.
+  WIND (hrrr vs zero, all 3 cities): NULL / NOT THE LEVER. A tiny consistent help ONLY on
+    pittsburgh (-0.7pp / -1.1pp, 4/5 & 3/5 folds), and a WASH-to-marginally-negative on
+    fresno (+0.20 / -0.07pp) and slc (+0.14 / +0.23pp, only 1/5 folds helped). Sub-1%
+    everywhere and the wrong sign on the two terrain/sparse cities. This CONFIRMS the §H2
+    "wind is not the lever" finding now under proper K-fold, on 3 cities: advection is not
+    what earns the GNN its win; the terrain-mean (RK-elev) prior + temporal memory are.
+    (Only the GNN correction sees wind; prior/baseline don't -- so this is wind's full
+    ceiling on the task.)
+
+OVERALL. The covariate-NULL story extends cleanly from the SPATIAL task to the TEMPORAL
+task. On BOTH regimes temp / AOD / wind are redundant: a held-out sensor's OWN persistence
++ lag24/lag168 history already carries whatever temporal signal these covariates provide,
+so bolting them on moves MAE by <=1% and usually the wrong way. The project's win is NOT
+covariate fusion -- it is (terrain-mean RK-elev prior) + (temporal memory) + (GNN nonlinear
+correction), exactly §H/§I. This is the honest negative result that keeps the baselines clean:
+we tested the covariates on the one task where they COULD have paid off, and they did not.
+
+CODE ADDED THIS SESSION (all leak-free, optional, default-off; the §I path is byte-identical
+when the new flags are absent):
+  - src/model/train.py: NODE_WIND_SPEED global = per-node hypot(u10,v10) [T,N], stashed as a
+    side effect of build_static_graph (no return-signature change -> the 5 eval drivers that
+    unpack the 13-tuple are untouched).
+  - scripts/eval_temporal.py: --wind-feature = per-node standardized wind-SPEED node feature,
+    mirroring --aod-feature (guards on has_wind; errors on --wind zero). Phase-2 (running the
+    per-node wind feature) was SKIPPED by decision: the wind on/off isolation above already
+    answers whether wind carries usable signal (it does not). Flag is built + smoke-tested
+    (fresno, runs clean, node_in increments) so it's ready if ever wanted.
+  - scripts/run_temporal_covariates.py: paired covariate driver (same folds+seeds, one process
+    per city/gap; emits RESULT: json per variant incl. per-fold arrays).
+  - scripts/run_temporal_cov_matrix.sh (Phase-1 matrix), run_temporal_cov_matrix_p2.sh (Phase-2,
+    unused), scripts/aggregate_temporal_cov.py (RESULT: -> results.csv incl. derived wind rows).

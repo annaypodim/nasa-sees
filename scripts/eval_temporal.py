@@ -212,10 +212,27 @@ def run_seed(seed, graph, args, masks=None):
         az[~fin] = 0.0
         aod_z_t = torch.tensor(az, dtype=torch.float)
 
-    # node features: [pm(masked), (persistence, lag1, lag24 if temporal), (aod)]
+    # ---- WIND-SPEED feature (per-node standardized wind speed) ------------------
+    # Mirrors --aod-feature: the per-node wind SPEED (hypot(u10,v10)) that train.py
+    # already loads is stashed in tr.NODE_WIND_SPEED. Time-varying, per-node -> a
+    # covariate the persistence+kriging prior can't see. Leak-free (an exogenous
+    # forcing field, not derived from PM). Standardized over finite cells.
+    wind_z_t = None
+    if getattr(args, "wind_feature", False):
+        if (not has_wind) or tr.NODE_WIND_SPEED is None:
+            raise SystemExit(f"--wind-feature needs real wind; none for {args.city} "
+                             f"(has_wind={has_wind}; did you pass --wind zero?)")
+        ws = np.asarray(tr.NODE_WIND_SPEED, dtype=np.float64)
+        fin = np.isfinite(ws)
+        wz = (ws - ws[fin].mean()) / (ws[fin].std() + 1e-6)
+        wz[~fin] = 0.0
+        wind_z_t = torch.tensor(wz, dtype=torch.float)
+
+    # node features: [pm(masked), (persistence, lag1, lag24 if temporal), (aod), (wind)]
     use_temporal = args.temporal
     long_lags = use_temporal and args.long_lags
-    node_in = 1 + (3 if use_temporal else 0) + (2 if long_lags else 0) + int(args.aod_feature)
+    node_in = (1 + (3 if use_temporal else 0) + (2 if long_lags else 0)
+               + int(args.aod_feature) + int(getattr(args, "wind_feature", False)))
 
     def node_features(t, hide_mask):
         x = knownz_t[t].reshape(-1, 1).clone()   # start from best-known estimate
@@ -227,6 +244,8 @@ def run_seed(seed, graph, args, masks=None):
             cols += [lag48[t].reshape(-1, 1), lag168[t].reshape(-1, 1)]
         if aod_z_t is not None:
             cols.append(aod_z_t[t].reshape(-1, 1))
+        if wind_z_t is not None:
+            cols.append(wind_z_t[t].reshape(-1, 1))
         return torch.cat(cols, dim=1)
 
     delev = edge_delev if args.elev_gate else torch.zeros_like(edge_delev)
@@ -332,6 +351,9 @@ def main():
                          "stale (esp. sparse terrain / SLC).")
     ap.add_argument("--temp-gate", action="store_true")
     ap.add_argument("--aod-feature", action="store_true")
+    ap.add_argument("--wind-feature", action="store_true",
+                    help="per-node standardized wind-SPEED node feature (mirrors "
+                         "--aod-feature). Needs real wind (not --wind zero).")
     ap.add_argument("--elev-gate", action="store_true")
     ap.add_argument("--elev-kernel", action="store_true")
     ap.add_argument("--elev-kernel-h", type=float, default=150.0)

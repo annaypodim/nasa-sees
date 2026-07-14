@@ -1,0 +1,17 @@
+city,gap_len,variant,ours_mae,ours_std,stk_mae,baseline_ours_mae,delta_vs_baseline_pct,folds_improved_over_baseline
+fresno,24,base,4.1634,0.0975,4.486,4.1634,0.0,n/a
+fresno,24,wind_hrrr_vs_zero,4.1634,0.0975,4.486,4.155,0.202,2
+fresno,48,base,4.751,0.4089,5.0623,4.751,0.0,n/a
+fresno,48,wind_hrrr_vs_zero,4.751,0.4089,5.0623,4.7542,-0.067,2
+pittsburgh,24,base,3.8921,0.0944,4.3216,3.8921,0.0,n/a
+pittsburgh,24,temp,3.8928,0.0935,4.3215,3.8921,0.019,2
+pittsburgh,24,aod,3.9315,0.0932,4.3214,3.8921,1.012,0
+pittsburgh,24,wind_hrrr_vs_zero,3.8921,0.0944,4.3216,3.9193,-0.694,4
+pittsburgh,48,base,4.2763,0.2513,4.6576,4.2763,0.0,n/a
+pittsburgh,48,temp,4.2963,0.2423,4.6577,4.2763,0.468,2
+pittsburgh,48,aod,4.304,0.199,4.6578,4.2763,0.65,2
+pittsburgh,48,wind_hrrr_vs_zero,4.2763,0.2513,4.6576,4.3239,-1.101,3
+slc,24,base,5.9368,1.2376,6.1371,5.9368,0.0,n/a
+slc,24,wind_hrrr_vs_zero,5.9368,1.2376,6.1371,5.9288,0.135,1
+slc,48,base,7.4065,1.3646,7.5414,7.4065,0.0,n/a
+slc,48,wind_hrrr_vs_zero,7.4065,1.3646,7.5414,7.3892,0.234,1

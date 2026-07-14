@@ -1,0 +1,8 @@
+[preprocess] masked 7430/61971 implausible cells (11.99%) outside [0, 500] ug/m3 -> treated as not observed
+[preprocess] sensors: 21 -> 18 kept  (threshold=40% yearly coverage)
+[preprocess] dropped full-year duds (coverage): [('111391', 0.0), ('118085', 0.0), ('18625', 0.0)]
+[preprocess] observed cells: 49026/53118 (92.3%) -> only these can enter the loss; the rest are filled inputs (zero), never targets
+[wind] source=HRRR 3km (/Users/annaypodimatopoulou/Code/side_quests/nasa-sees/.claude/worktrees/agent-ac26f922cb5129545/data/fresno_variants/fresno/wind_hrrr)
+[graph] set='urban'  nodes=18  edges=112  timesteps=2951  has_wind=True  has_temp=False
+[cov] city=fresno wind=hrrr gap=24 N=18 folds=5 ids_hash=235782118
+RESULT: {"city": "fresno", "gap_len": 24, "variant": "base_wind_hrrr", "ours_mae": 4.1634, "ours_std": 0.0975, "stk_mae": 4.486, "baseline_ours_mae": 4.1634, "delta_vs_baseline_pct": 0.0, "folds_improved_over_baseline": "n/a", "ours_per_fold": [4.2138, 4.2128, 4.0215, 4.2881, 4.0808]}
