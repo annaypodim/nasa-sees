@@ -1909,3 +1909,42 @@ when the new flags are absent):
     per city/gap; emits RESULT: json per variant incl. per-fold arrays).
   - scripts/run_temporal_cov_matrix.sh (Phase-1 matrix), run_temporal_cov_matrix_p2.sh (Phase-2,
     unused), scripts/aggregate_temporal_cov.py (RESULT: -> results.csv incl. derived wind rows).
+
+--------------------------------------------------------------------------------
+(K3) DIAGNOSTIC v2 -- density predictor + OBSERVED CROSSOVER + 2-axis rule
+--------------------------------------------------------------------------------
+Two fixes to the weak v1 diagnostic (K2, R2=0.385, no observed crossover):
+
+1. BETTER SPATIAL PREDICTOR (scripts/enrich_diagnostic.py, no training, 18 nets):
+   density (nodes/km2)  R2=0.673 Spearman 0.796   <- vs spatial_nrmse R2=0.385
+   spatial_nrmse+density (2-feat) R2=0.707. Density is the stable predictor; nrmse
+   scattered on Fresno. Matches IGNNK intuition (denser graph -> GNN earns more).
+
+2. RANGE EXPANSION ALONG GAP AXIS (scripts/run_gap_sweep.py): winning config, full
+   3 cities x gap {6,12,24,48,72}h, 5-fold. gap_points.csv. FINDINGS:
+   - INVERTED-U in gap on dense Pgh (6h 6.5 -> 24h 9.9 -> 72h 6.8): the GNN's edge
+     over ST-kriging PEAKS at an intermediate gap. Short gap -> persistence near-
+     perfect -> ST-kriging optimal -> little room. Long gap -> all stale -> spatial
+     dominates for both -> edge shrinks. Fresno monotone-declining over 6-72h; SLC
+     humped. Peak location is CITY-DEPENDENT (not a universal law).
+   - *** OBSERVED CROSSOVER (the missing piece) ***: SLC gap=6h margin = -2.97%,
+     0/5 folds -> the GNN LOSES. First regime where the learned model is NOT worth
+     it, landing exactly where the rule predicts: lowest spatial headroom (sparsest
+     city) x lowest temporal staleness (shortest gap). Converts the deploy threshold
+     from EXTRAPOLATION (K2) to a bracketed, OBSERVED boundary.
+
+2-AXIS FIT (15 gap-points, margin range -3.0..+9.9):
+   headroom only            R2=0.662
+   staleness only           R2=0.051   (hump, not linear)
+   headroom + staleness^2   R2=0.747   <- interpretable deploy rule
+   + interaction            R2=0.771
+RULE: deploy the GNN when spatial headroom is high OR gap is in the mid range;
+SKIP it when headroom is low AND gap is short (persistence already near-optimal).
+
+NOVELTY (honest, updated): the observed crossover elevates this from a thin
+"suggestive trend" to a real characterization with a VALIDATED boundary. But it is
+still an INSTANCE of algorithm selection (Rice 1976) / interpolation-vs-density
+crossover applied to PM2.5 graph imputation -- an applied/benchmark contribution,
+not a new method or concept. Defensibly ours: (a) strong honest baseline (ST-krig
+w/ terrain+memory, not IDW), (b) the 2-axis deploy rule, (c) the observed loss
+regime, (d) the gap inverted-U. Poster-solid; workshop-tier as a paper.
