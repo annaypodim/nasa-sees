@@ -2,3 +2,12 @@
 [rk-aod] A_rk seed 0 done (12:18:13)
 [rk-aod] A_rk seed 1 done (12:31:08)
 [rk-aod] A_rk seed 2 done (12:44:27)
+[rk-aod] A_rk seed 3 done (12:53:47)
+[rk-aod] B_rk_aod seed 0 done (13:03:11)
+[rk-aod] B_rk_aod seed 1 done (13:12:05)
+[rk-aod] B_rk_aod seed 2 done (13:21:07)
+[rk-aod] B_rk_aod seed 3 done (13:30:17)
+[rk-aod] DONE 13:30:17
+=== SLC RK-prior A/B (OURS mean; IDW 4.06, RK-elev 3.65 refs) ===
+A_rk      OURS=3.915 +- 0.168 (n=4)
+B_rk_aod  OURS=4.054 +- 0.143 (n=4)

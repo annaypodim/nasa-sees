@@ -1,0 +1,17 @@
+===== MEMORYLESS (spatial-only) gap-len 24h =====
+  seed 0: OURS mae=4.019 r2=0.669 (n=5184)   persistence mae=5.677   prior_blend b=0.50
+  seed 1: OURS mae=5.049 r2=0.250 (n=5184)   persistence mae=7.264   prior_blend b=0.50
+  seed 2: OURS mae=4.299 r2=0.577 (n=5184)   persistence mae=6.216   prior_blend b=0.50
+TEMPORAL GAP-FILL  city=slc  gap=24h x6  seeds=[0, 1, 2]
+OURS (GraPhyNet)       MAE=4.456±0.435  R2=0.499
+Persistence floor      MAE=6.386±0.659  R2=0.094
+mean learned prior blend b (persistence weight) = 0.50
+===== MEMORYLESS (spatial-only) gap-len 48h =====
+  seed 0: OURS mae=5.149 r2=0.378 (n=10368)   persistence mae=7.665   prior_blend b=0.50
+  seed 1: OURS mae=4.451 r2=0.571 (n=10368)   persistence mae=7.242   prior_blend b=0.50
+  seed 2: OURS mae=4.932 r2=0.212 (n=10368)   persistence mae=8.374   prior_blend b=0.50
+TEMPORAL GAP-FILL  city=slc  gap=48h x6  seeds=[0, 1, 2]
+OURS (GraPhyNet)       MAE=4.844±0.292  R2=0.387
+Persistence floor      MAE=7.761±0.467  R2=0.065
+mean learned prior blend b (persistence weight) = 0.50
+MEMLESS_DONE

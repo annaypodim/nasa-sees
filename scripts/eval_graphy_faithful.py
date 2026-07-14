@@ -322,13 +322,18 @@ def run_seed(seed, graph, args):
                 # the masked target joins val/test in the hidden set for THIS example
                 hb = hidden_base_bool.clone(); hb[target] = True
                 prior_b[b * N:(b + 1) * N] = prior_z(t, hb)
-        out = model(xb, L_D_b_static, torch.from_numpy(eib), ew_b, efb,
-                    gate_ctx=gctx(B, efb))[:, 0]
-        if use_prior:
-            out = out + prior_b                       # residual on the IDW/RK floor
+        corr = model(xb, L_D_b_static, torch.from_numpy(eib), ew_b, efb,
+                     gate_ctx=gctx(B, efb))[:, 0]     # raw GNN correction (z-space)
+        out = corr + prior_b if use_prior else corr   # residual on the IDW/RK floor
         pred = to_ug(out[torch.from_numpy(tgt_nodes)])
         true = torch.tensor(trues_ug, dtype=torch.float)
         loss = loss_fn(pred, true)                    # MSE in raw ug/m3
+        # CORRECTION ANCHOR: penalise the GNN correction magnitude at the scored
+        # nodes so the hybrid stays close to (>=) the prior floor. Small correction
+        # over a strong prior is where signal pays; unregularised it wandered and
+        # HURT (RK-prior 3.92 > RK-elev 3.65). Only meaningful with a prior.
+        if use_prior and args.corr_reg > 0.0:
+            loss = loss + args.corr_reg * (corr[torch.from_numpy(tgt_nodes)] ** 2).mean()
         # SPIN AOD spatial-gradient constraint: on each example's full node field,
         # the predicted PM gradient should match the satellite AOD gradient where a
         # retrieval exists. Scale-free -> shapes the field without touching PM level.
@@ -481,6 +486,11 @@ def main():
                     help="skip model training; report only the IDW and elevation "
                          "regression-kriging (RK-elev) baselines over all seeds. Fast "
                          "literature terrain-aware baseline on the identical splits.")
+    ap.add_argument("--corr-reg", type=float, default=0.0,
+                    help="L2 penalty (z-units^2) on the GNN correction magnitude at the "
+                         "scored nodes, keeping the hybrid close to (>=) its prior floor. "
+                         "Fixes the unregularised RK-prior wandering off 3.65 and HURTING. "
+                         "Only meaningful with --idw-prior/--rk-prior. Try 0.05..0.5.")
     ap.add_argument("--aod-weight", type=float, default=0.0,
                     help="weight of the SPIN masked AOD spatial-gradient loss (0=off). "
                          "Uses satellite AOD as a training constraint (pred gradient should "

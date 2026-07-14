@@ -1,0 +1,25 @@
+[faithful] city=slc wind=zero config=small (hidden=128 layers=3) steps=8000 batch=32 lr=0.0001 wd=0.0 dropout=0.0
+[preprocess] despike: masked 984/87320 spike cells (1.13%) > 6 robust-sigma from a 13h rolling median -> treated as not observed
+[preprocess] spatial-qa: masked 726/87320 cells (0.83%) > 8 cross-sensor robust-z from the hourly network median -> not observed
+[preprocess] masked 4379/87320 implausible cells (5.01%) outside [0, 500] ug/m3 -> treated as not observed
+[preprocess] sensors: 40 -> 36 kept  (threshold=40% yearly coverage)
+[preprocess] dropped full-year duds (coverage): [('112594', 0.0), ('129727', 0.0), ('34941', 0.081), ('199645', 0.206)]
+[preprocess] observed cells: 74827/78588 (95.2%) -> only these can enter the loss; the rest are filled inputs (zero), never targets
+[wind] source=zero -> convection inert (distance only)
+[graph] set='urban'  nodes=36  edges=228  timesteps=2183  has_wind=False  has_temp=False
+[warn] STRICT_INPUTS off: wind is missing -> zero-filled (convection runs on distance only)
+[aod] aod_points_2023-12-01_2024-02-2.csv: 29 days, 36/36 sensors with data, 50% of day-cells have a retrieval
+[aod] gradient loss ACTIVE  weight=0.5  has_aod=True  hours with >=2 retrievals=600  file=aod_points_2023-12-01_2024-02-2.csv
+  seed 2: OURS mae=4.184  IDW mae=4.130  RK(elev) mae=3.726   w(D,C,L)=(0.33,0.33,0.34)
+
+========================================================================
+FAITHFUL GraPhy  city=slc  config=small  split(tr/val/te)=(24, 4, 8)  seeds=[2]  (538s)
+========================================================================
+FAITHFUL GraPhy     MAE=4.184+-0.000  RMSE=5.885  R2=0.821+-0.000  corr=0.913
+IDW baseline        MAE=4.130+-0.000  RMSE=6.201  R2=0.801+-0.000  corr=0.896
+RK-elev baseline    MAE=3.726+-0.000  RMSE=5.561  R2=0.840+-0.000  corr=0.917
+repo best (ref)     MAE=3.054+-0.29 (IDW-residual scaffold, wind zero)
+GraPhy (paper)      MAE=2.380   (Fresno, 41 sensors, Oct23-Jan24)
+mean fusion weight  w_D(diffusion)=0.328  w_C(convection)=0.333  w_L(local)=0.338
+diverged seeds: 0/1  (plain MSE stable)
+========================================================================

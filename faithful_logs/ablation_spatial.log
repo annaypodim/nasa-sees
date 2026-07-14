@@ -1,0 +1,19 @@
+########## fresno  gap 24h  (5-fold, SPATIAL-ONLY arm) ##########
+ST-kriging baseline    MAE=4.975±0.097  R2=0.429
+Persistence floor      MAE=7.625±0.179  R2=0.102
+########## fresno  gap 48h  (5-fold, SPATIAL-ONLY arm) ##########
+ST-kriging baseline    MAE=5.497±0.656  R2=0.122
+Persistence floor      MAE=9.129±0.729  R2=-0.201
+########## slc  gap 24h  (5-fold, SPATIAL-ONLY arm) ##########
+ST-kriging baseline    MAE=7.383±1.735  R2=-0.588
+Persistence floor      MAE=7.712±1.024  R2=-0.260
+########## slc  gap 48h  (5-fold, SPATIAL-ONLY arm) ##########
+ST-kriging baseline    MAE=9.517±2.898  R2=-2.854
+Persistence floor      MAE=9.342±1.581  R2=-0.759
+########## pittsburgh  gap 24h  (5-fold, SPATIAL-ONLY arm) ##########
+ST-kriging baseline    MAE=5.599±0.083  R2=0.483
+Persistence floor      MAE=5.425±0.107  R2=0.381
+########## pittsburgh  gap 48h  (5-fold, SPATIAL-ONLY arm) ##########
+ST-kriging baseline    MAE=5.570±0.254  R2=0.476
+Persistence floor      MAE=6.515±0.235  R2=0.098
+ABLATION_SPATIAL_DONE

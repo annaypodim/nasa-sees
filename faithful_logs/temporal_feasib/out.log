@@ -1,0 +1,17 @@
+===== gap-len 24h =====
+  seed 0: OURS mae=3.593 r2=0.753 (n=5184)   persistence mae=5.677   prior_blend b=0.35
+  seed 1: OURS mae=4.595 r2=0.496 (n=5184)   persistence mae=7.264   prior_blend b=0.34
+  seed 2: OURS mae=3.811 r2=0.670 (n=5184)   persistence mae=6.216   prior_blend b=0.36
+TEMPORAL GAP-FILL  city=slc  gap=24h x6  seeds=[0, 1, 2]
+OURS (GraPhyNet)       MAE=4.000±0.430  R2=0.640
+Persistence floor      MAE=6.386±0.659  R2=0.094
+mean learned prior blend b (persistence weight) = 0.35
+===== gap-len 48h =====
+  seed 0: OURS mae=4.799 r2=0.421 (n=10368)   persistence mae=7.665   prior_blend b=0.32
+  seed 1: OURS mae=4.156 r2=0.661 (n=10368)   persistence mae=7.242   prior_blend b=0.31
+  seed 2: OURS mae=4.921 r2=0.284 (n=10368)   persistence mae=8.374   prior_blend b=0.31
+TEMPORAL GAP-FILL  city=slc  gap=48h x6  seeds=[0, 1, 2]
+OURS (GraPhyNet)       MAE=4.626±0.336  R2=0.456
+Persistence floor      MAE=7.761±0.467  R2=0.065
+mean learned prior blend b (persistence weight) = 0.31
+TEMPORAL_DONE
