@@ -1,7 +1,0 @@
-launching base -> pgh_edge_logs/base.log
-launching temp_edge -> pgh_edge_logs/temp_edge.log
-launching aod_edge -> pgh_edge_logs/aod_edge.log
-=== PITTSBURGH EDGE-GATE ABLATION (8 seeds; base=no gate) ===
-base       OURS (GraPhyNet)      MAE=5.014±0.343  RMSE=8.086  R2=0.581  corr=0.779 IDW baseline          MAE=5.027±0.543  RMSE=8.269  R2=0.556  corr=0.761 
-temp_edge  OURS (GraPhyNet)      MAE=5.047±0.379  RMSE=8.137  R2=0.575  corr=0.776 IDW baseline          MAE=5.027±0.543  RMSE=8.269  R2=0.556  corr=0.761 
-aod_edge   OURS (GraPhyNet)      MAE=5.037±0.348  RMSE=8.146  R2=0.574  corr=0.775 IDW baseline          MAE=5.027±0.543  RMSE=8.269  R2=0.556  corr=0.761 

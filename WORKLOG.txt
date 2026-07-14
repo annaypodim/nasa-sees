@@ -1270,3 +1270,481 @@ BASE-CONVERGENCE FIX (in progress): added --weight-decay, --dropout, --hidden, -
   scripts/sweep_base_conv.sh sweeps pure-faithful fresno_med_abc EPA over small/tiny +
   wd/dropout to get it to BEAT our IDW 2.83 (the true apples-to-apples GraPhy repro).
   [results pending -> faithful_logs/sweep_base_console.log]
+
+===============================================================================
+SESSION 2026-07-12 (cont. 3): base-model convergence investigation (beat OUR IDW)
+===============================================================================
+GOAL: reproduce GraPhy's HEADLINE apples-to-apples -> get the PURE faithful model
+(no gate, no hybrid) to BEAT our own IDW, like the paper beats its IDW 3.07->2.38.
+Diagnosis (from cont.2): pure model overfits/collapses on too few train sensors.
+
+CODE ADDED (regularization + capacity + training-length knobs):
+  * eval_graphy_faithful.py: --weight-decay, --dropout, --hidden, --layers (override
+    config capacity). graphy_faithful.py: _mlp() takes dropout (adds nn.Dropout after
+    the hidden ReLU; dropout=0 -> byte-identical); threaded through all 4 modules +
+    GraPhyLayer + GraPhyFaithful. Ungated/no-reg path unchanged.
+  * run_graphy_faithful.sh: env flags WD, DROPOUT, HID, LAY, PATIENCE, VALEVERY, LR
+    (all fold into EXTRA + TAG). scripts/sweep_base_conv.sh, sweep_train_len.sh.
+
+EXPERIMENT 1 -- regularization sweep on fresno_med_abc (23 nodes / 16 train, IDW 2.83):
+  * large (wave-1, cont.2)          6.6   (2/4 collapse)   loses 2.3x
+  * small baseline (128/3)          5.49 +- 2.39   loses 1.94x
+  * small + wd1e-3                  5.31 +- 1.82   loses 1.88x
+  => regularization gives DIMINISHING returns; capacity/reg is not the lever. High
+     variance (+-1.8-2.4) = seed instability, not just overfit.
+
+USER PUSH: "why not run on the EXPANDED set?" -> fresno_med_abc WAS the expanded (wider
+  box) set, but strict A/B QA + 40% coverage strangled 35 usable -> 16 train. FIX:
+  relaxed QA (apply_ab_qa --frac-max 1.0 --recover-channel) keeps intermittent-
+  disagreement sensors + recovers 5 on their healthy channel (all corr-to-city .88-.96)
+  -> data/fresno_med_max: 32 usable -> **30 nodes / 20 train, IDW 3.59**. Registered in
+  CITY_CONFIG. KEY: this is the PAPER ANALOG -- their IDW 3.07 on 28 sensors is noisier &
+  denser than our ultra-clean 2.83; med_max (3.59, ~30 nodes) matches the paper's regime.
+  Two distinct Fresno targets now: med_abc (clean, lowest ABSOLUTE MAE) vs med_max (dense,
+  the net for reproducing "model beats its own IDW ~22%").
+
+EXPERIMENT 2 -- regularization sweep on fresno_med_max (30 nodes / 20 train, IDW 3.59):
+  * small baseline                  4.98 +- 1.67   loses 1.38x
+  * small + wd1e-3                  4.91 +- 1.62   loses 1.37x
+  => MORE SENSORS closed the model-vs-IDW ratio (1.94x -> 1.38x, user's instinct right),
+     but reg still doesn't cross. Stopped remaining reg configs (compounding evidence).
+
+EXPERIMENT 3 -- training-length (DIFFERENT question: under-convergence?): the 4000-step
+  best-val steps spread 250..3999 with several at 3750/3999 (STILL IMPROVING at the stop)
+  -> patience-10 halts good seeds early. sweep_train_len.sh on fresno_med_max: (1) 15k
+  steps, patience 30, val-every 500; (2) lr 5e-4, 8k steps. [RUNNING; 15k is slow --
+  8-way oversubscribes 8 cores, ~35% CPU/proc -> ETA ~45-60 min for cfg1, ~1.5-2h total.]
+  If longer training pulls the mean under IDW 3.59 -> reproduction found. If it also
+  plateaus ~4.9 -> honest conclusion: our faithful repro underperforms the paper on
+  unspecified training details; the IDW-prior hybrid is the real fix.
+
+--- EXPERIMENT 3 RESULT (training length on fresno_med_max, IDW 3.59) ---
+  * 4000 steps  (patience 10): 4.98 +- 1.67   ratio 1.39x
+  * 15000 steps (patience 30): 4.311 +- 1.02  ratio 1.20x   <- longer training -13% MAE, -39% var
+  best-val steps @15k: 1000 7000 8000 9500 11500 14500 14500 14999
+  => UNDER-CONVERGENCE CONFIRMED: 4/8 seeds best-val at 14.5k-15k = STILL IMPROVING at the
+     end. The pure model is under-trained, not over-parameterized. Gap to IDW closes
+     monotonically (1.39x->1.20x) and has NOT plateaued -> more steps should cross IDW 3.59.
+  ROOT CAUSE of "faithful GraPhy sucks on Fresno" = TWO compounding, now-confirmed causes:
+    (1) too few train sensors (16->20 via relaxed QA fresno_med_max: 1.94x->1.39x)
+    (2) severe under-convergence (4k+patience10 halts early; 15k->4.31, still climbing).
+  NEXT: higher LR (5e-4, config 2 running) for faster convergence; then a long
+  (25-30k) run to actually beat IDW. Use 4-way not 8-way (8-way load=21 on 8 cores,
+  ~38% efficient -> 15k took ~140 min; 4-way would ~halve wall time).
+
+===============================================================================
+SESSION 2026-07-12 (cont. 4): FAITHFULNESS AUDIT vs paper equations + convection fix
+===============================================================================
+Re-read arXiv 2506.06917 module equations to make graphy_faithful.py the LITERAL arch
+(free points before declaring any "faithful GraPhy" result). Findings:
+  * Diffusion: paper l (.) sigma(L_D X W) AND "input features first undergo an MLP to
+    learn node representations" -> our node_mlp->W->l IS faithful (earlier worry wrong).
+  * Local: X=M.F, M_ii=1+sum e -> matches.
+  * Fusion: 1 MLP -> softmax(3) -> matches.
+  * Fresno hyperparams: 5 layers, hidden 512 -> our --config large. (Faithful Fresno
+    comparison must use large, not small; small is a fast proxy.)
+  * CONVECTION MESSAGE = THE FREE-POINTS GAP: paper ResMessage phi = MLP(concat[x_i+e,
+    x_j+e]) -- BOTH endpoint node features, each + edge. We were feeding msg_mlp(h[src]+e)
+    ONLY (source), dropping the target-node term + halving the input width. FIXED:
+    msg_mlp now 2*dim in; m = msg_mlp(concat[h[dst]+e, h[src]+e]). (This is the module the
+    user had previously RASHLY removed instead of fixing; now implemented properly.)
+  * Ambiguous / NOT changed (paper silent, changing risks anti-faithfulness): whether the
+    node MLP is ONE shared MLP feeding all 3 modules vs our per-module node_mlp; exact
+    readout head (we use a Linear). Flagged, left as-is.
+  Smoke: fixed convection compiles + runs; convection fusion weight active (~0.34).
+  Validation run: 2 seeds small 4000 on fresno_med_max vs pre-fix 4.98 [pending].
+
+===============================================================================
+SESSION 2026-07-12 (cont. 5): SLC WIND fetched + overnight SLC+wind 2x2 ablation
+===============================================================================
+INSIGHT (user): a convection module + a directional drainage gate are dead weight with
+  --wind zero. SLC is exactly where real wind matters (canyon/drainage). Our drainage
+  gate NEEDS wind (w_A=cos(wind-bearing)). So SLC+wind is where convection + drainage +
+  the just-fixed message ALL finally have signal.
+DONE:
+  * Fetched HRRR 10m wind for SLC via Open-Meteo (FREE): scripts/fetch_wind_hrrr.py
+    --city slc, 35 sensors x 2952 h -> data/slc/wind_hrrr. Wired wind_hrrr_dir into the
+    slc CITY_CONFIG. Verified --wind hrrr -> has_wind=True on slc (22 nodes, IDW 3.59).
+  * Convection fix validated on Fresno (2 seeds): 3.94/4.55 corr .85-.87, ~= pre-fix 4.98;
+    w_C=0.00 on Fresno (convection near-unused on flat/low-wind) -> confirms SLC is the
+    venue where convection matters.
+OVERNIGHT SWEEP (scripts/sweep_slc_wind.sh, ALL wind hrrr, lr5e-4, 15k steps, patience20,
+  4 seeds, 4-way -> converged; ~45-60min/config, ~3-4h total):
+    A pure  , terrain OFF (control)
+    B pure  , terrain ON  (--terrain-gate)             <- novelty vs A
+    C hybrid, terrain OFF (--idw-prior)
+    D hybrid, terrain ON  (--idw-prior --idw-prior-elev --terrain-gate)  <- novelty vs C
+  KEY MEASUREMENTS: B-A and D-C = terrain novelty contribution (wind held ON to isolate
+  terrain). A-vs-C / B-vs-D = pure-vs-hybrid (does learned physics beat interpolation-
+  anchoring when wind advection is present?). Deep question: on a wind-advected field IDW
+  is distance-only/biased, so a CONVERGED pure model may beat the hybrid -- or the prior
+  stays the data-efficient winner on 22 sensors. Results -> faithful_logs/small_15000_slc_*.
+
+================================================================================
+SESSION cont.6  (2026-07-13, overnight)  SLC+WIND ablation: round-1 result + convergence fix
+================================================================================
+Round-1 sweep (sweep_slc_wind.sh) config A landed: PURE faithful, terrain OFF, wind
+ON (control). 4 seeds, 15k steps, lr 5e-4.
+  A: MAE=5.406 +-1.258   IDW(this run)=4.753   per-seed 3.96/4.74/5.57/7.35
+     fusion w=(D 0.17, C 0.00, L 0.84);  0/4 diverged
+Two findings:
+ (1) UNDER-CONVERGED, not a plateau. seed_0 best@13000, seed_3 best@9500 -- both
+     near the 15k CAP; patience-20 (10k no-improve) never fired. High seed variance
+     (3.96->7.35, seed_3 R2<0) is the tell. -> pure model needs a bigger step budget.
+ (2) STRUCTURAL: fusion collapses to w~(0,0,1) = Local-ONLY on several seeds (both
+     Diffusion AND Convection weighted ~0). Even WITH real HRRR wind, convection earns
+     ZERO fusion weight (w_C=0.00). The model discards its spatial-interpolation
+     machinery -> explains why pure faithful can't beat IDW here. Longer training will
+     cut variance/MAE but this collapse caps the pure ceiling near IDW, not below.
+     (Same w_C=0 pattern we saw on flat Fresno -> convection module is dead weight in
+      BOTH cities under the softmax fusion, even where wind advection is physical.)
+
+DECISION (user: "if it needs to converge for longer, let it converge for longer"):
+Relaunched as sweep_slc_wind2.sh -- PURE configs A/B at 40k cap (patience 20 so each
+seed early-stops at a true plateau), HYBRID C/D kept at 15k (IDW-anchored, stable).
+Round-1 A preserved at faithful_logs/A_pure_terrainOFF_15k_slc/ for before/after.
+Yardstick for this sweep = IDW 4.75 (recomputed on the val-hours-300 SLC subset), NOT
+the 3.59 smoke-test figure (different node/hour sampling).
+Pending: A@40k, B@40k (B-A = converged pure terrain novelty), C@15k, D@15k (D-C).
+
+--- cont.6 UPDATE: A@40k CONVERGENCE CONFIRMED (decisive negative for pure model) ---
+A pure/terrainOFF re-run at 40k cap == BYTE-IDENTICAL to A@15k (MAE 5.406+-1.258).
+Reason: every seed's best-val checkpoint landed <=13k steps and NEVER improved after:
+  seed0 best@13000  seed1 best@500  seed2 best@11000  seed3 best@9500
+So the extra 25k steps bought nothing -- the pure model is GENUINELY CONVERGED at ~13k,
+not cap-limited (my earlier "hitting the cap" read was wrong; patience-20 now confirms
+the plateau). CONCLUSION: pure faithful GraPhy is converged on SLC at MAE 5.41, and it
+LOSES to IDW (4.75). More training does not help. w_C=0.00 (convection unused) even
+with real HRRR wind. High seed variance (3.96->7.35) traced to noisy 2-sensor val split
+driving early-stop checkpoint selection (seed1 locked best@500).
+STORY IMPACT: this is the clean CONTROL that makes the hybrid win meaningful -- pure
+physics GNN, even faithful+converged+wind, cannot beat interpolation on SLC. The
+IDW-anchored hybrid + terrain gates (SLC full-stack 4.19 < IDW 4.52) is where our
+novelty pays off. Pending B@40k (converged pure terrain novelty B-A), then C/D@15k.
+
+--- cont.6 UPDATE: B@40k pure+terrain CONVERGED -> terrain HURTS the PURE model ---
+B (pure, terrain ON, 40k): MAE=6.583+-2.853  vs  A (pure, terrain OFF): 5.406+-1.258.
+B - A = +1.18 MAE (WORSE) and variance MORE THAN DOUBLED (+-1.26 -> +-2.85).
+Per-seed: terrain HELPS well-behaved seeds (s1 4.74->3.94) but CATASTROPHIC on others
+ (s2 MAE=10.89, corr=-0.156 anti-correlated, from garbage best@1000 checkpoint where
+  convection got w=0.33 and blew up). best-val steps 1000/6000/6500/8500 (converged).
+CONCLUSION: learned terrain gates add flexibility the PURE model can't stabilize -- the
+noisy 2-val-sensor early-stop occasionally locks a diverged checkpoint. Terrain novelty
+must ride on the IDW-anchored HYBRID (anchor keeps preds sane -> gates help w/o blowup).
+This motivates D-C (hybrid terrain delta) as THE decisive novelty test. Pending C, D.
+(Live instrumented curve run: terrain-ON seed0 tracking ~3.9 val = one of the GOOD seeds,
+ consistent w/ B's s0/s1 being fine; instability is seeds 2/3.)
+
+--- cont.6 UPDATE: C@15k hybrid terrain-OFF -> IDW ANCHOR STABILIZES (control) ---
+C (hybrid/idw-prior, terrain OFF, 15k): MAE=4.896+-1.111  vs IDW 4.753  vs A pure 5.406.
+Anchor works as predicted: variance tightened (pure +-1.26 -> +-1.11), NO blowups (worst
+seed 6.03 vs pure 7.35 / B-terrain 10.9), and CONVECTION now earns weight (w_C=0.165 vs
+0.00 in pure) -- the anchor makes physics modules safe to use. C ~ tied w/ IDW = the bar
+the terrain gates must beat. Pending D (hybrid + terrain) for the decisive D-C delta.
+
+================================================================================
+cont.6 FINAL: SLC+WIND CONVERGED 2x2 COMPLETE (04:20)  -- decisive verdict
+================================================================================
+IDW baseline (this sweep, 4 seeds) = 4.753.
+  A pure  /terrain OFF : MAE 5.406 +-1.258
+  B pure  /terrain ON  : MAE 6.583 +-2.853   (B-A = +1.18, variance 2x -> HURTS)
+  C hybrid/terrain OFF : MAE 4.896 +-1.111
+  D hybrid/terrain ON  : MAE 4.863 +-0.599   (D-C = -0.03 MAE, variance HALVED)
+Graphs: faithful_logs/convergence_curve.png (seed0 val-vs-step, best@5250 then overfit),
+        faithful_logs/slc_2x2_ablation.png (bar chart w/ error bars vs IDW).
+
+THREE ESTABLISHED FINDINGS (converged, 4-seed, not noise):
+ 1. HYBRID >> PURE. IDW-anchoring cuts MAE ~0.5-1.7 and kills blowups. Pure faithful
+    GraPhy -- even converged, even with real wind -- CANNOT beat IDW on SLC.
+ 2. Terrain gates on the PURE model are HARMFUL (+1.18 MAE, variance 2x; seed2 MAE 10.9
+    anti-correlated). Unanchored model can't stabilize the extra gate flexibility.
+ 3. Terrain gates on the HYBRID = ROBUSTNESS win, not mean-MAE win. D-C mean -0.03 but
+    seed variance HALVED (+-1.11 -> +-0.60), worst seed 6.03 -> 5.50. This is the clean
+    novelty claim: terrain gates make the anchored model RELIABLE, not just lucky.
+
+HONEST CAVEAT (correct the record): at converged 15k/4-seed, NOTHING beats IDW (4.75);
+D ties it (4.86). The earlier memory note "SLC full-stack 4.19 < IDW 4.52" was a single
+4k-step run w/ a different IDW reference -- NOT reproduced under rigorous multi-seed
+convergence. On these small SLC nets everything sits at the interpolation floor (matches
+the density-ceiling finding); terrain's value here is VARIANCE REDUCTION, not lower mean.
+
+NOVELTY FRAMING for writeup: (a) per-edge terrain anisotropy gate on diffusion +
+(b) directional drainage gate on convection, delivered as residual correctors over an
+IDW prior (hybrid). Contribution = robustness/stability of physics-GNN kriging on
+complex terrain, shown via a clean 2x2 where the gates help ONLY when anchored.
+Instrumentation added: eval_graphy_faithful.py --curve-out (per-seed val CSV) +
+scripts/plot_convergence.py + scripts/plot_2x2.py.
+
+
+================================================================================
+2026-07-13  SESSION: density push + literature baselines + RK-elev + AOD-grad loss
+================================================================================
+Goal this session: get BETTER results (lower MAE / real terrain-aware win), stop
+running in circles on marginal gate tweaks, and ground the work in the literature
+(GraPhy publishes NO standard kriging baseline -> we'd only ever had IDW).
+
+--------------------------------------------------------------------------------
+(A) SLC DENSIFICATION  -- density lever, confirmed on the yardstick
+--------------------------------------------------------------------------------
+Re-fetched SLC PurpleAir at --min-spacing-km 2.0 (winter 2023-12-01..2024-02-29,
+plain pm2.5_atm, scripts/fetch_purpleair.py --exclude-existing SUPPLEMENT mode so
+we only spent points on NEW sensors). 200 raw -> 69 in coords, but 29 newly-
+registered sensors had NO winter history -> effective net = 36 usable nodes after
+the 40%-coverage dud drop (was 22). Rebuilt processed cache (build_processed).
+
+RESULT (8 seeds, split 24/4/8, --wind zero, identical eval protocol):
+    old 22-node net  IDW ~4.75   (val = 2 sensors)
+    dense 36-node    IDW  4.063 +- 0.500   (val = 4 sensors)   -> -14% on IDW
+Density lever works on the YARDSTICK, and the val set doubled (2->4), directly
+easing the noisy early-stop / seed-variance problem. Confirms the density-ceiling
+thesis (density, not model, is the wall on small terrain nets).
+DECISION: did NOT push denser (0.75km=155 sensors). Reason: density lowers IDW
+too (moves the floor for everyone) -> it re-proves a banked point, does not win
+the NOVELTY. Held the fetch; pivoted to a real baseline + a new lever.
+
+--------------------------------------------------------------------------------
+(B) LITERATURE SEARCH  -- where the baseline actually is
+--------------------------------------------------------------------------------
+Standard INDUCTIVE-KRIGING baselines GraPhy omits (a reviewer expects these):
+  * IGNNK (AAAI 2021, arXiv 2006.07527) -- the canonical inductive-kriging GNN
+    (random-subgraph training). Reported MAE 12.73 on BTHSA.
+  * KCN (kriging convolutional net), INCREASE (2302.02738), SATCN, SpecKriging.
+  * SPIN (arXiv 2511.16013, Nov 2025) = "GraPhy done right on complex terrain":
+    diffusion+advection kernels (SAME physics as GraPhy) + a MASKED AOD-GRADIENT
+    LOSS. MAE 9.52, -25% vs IGNNK, on Taihang-Mountains terrain.
+  * Universal / regression kriging with a DEM covariate -- the classical
+    geostatistics terrain-aware model (elevation in the mean fn); R^2 up to 0.88.
+KEY INSIGHT: SPIN uses satellite AOD as a TRAINING CONSTRAINT (spatial gradient),
+NOT an input feature. This reframes our old "AOD-feature = neutral" finding: we
+tested it in the wrong place. AOD-as-gradient is what buys SPIN its 25%.
+
+--------------------------------------------------------------------------------
+(C) RK-ELEV BASELINE  -- *** THE BIG RESULT OF THE SESSION ***
+--------------------------------------------------------------------------------
+Built rk_elev_baseline() + --baselines-only in eval_graphy_faithful.py:
+regression-kriging with an OLS ELEVATION-DRIFT trend, then IDW of the residual:
+    pred = (b0 + b1*elev_test) + IDW_power2(residual)
+Reduces to plain IDW when b1->0, so it cleanly isolates the elevation covariate.
+Identical split/scoring to idw_baseline -> directly comparable.
+
+RESULT (dense SLC, 8 seeds, identical splits):
+    IDW baseline     MAE 4.063 +- 0.500   R^2 .764   corr .893
+    RK-elev baseline MAE 3.653 +- 0.476   R^2 .803   corr .908   <-- -10% vs IDW
+    (our best hybrid/terrain-gate variants: ~4.1-4.9, ALL worse than RK-elev)
+RK-elev beats IDW by ~10%, WINS EVERY SEED, and beats every GraPhy variant we
+have ever built -- with ZERO training and ZERO neural net.
+
+INTERPRETATION (corrects our whole terrain approach): the terrain signal lives in
+the kriging MEAN FUNCTION (elevation drift), NOT in learned per-edge gates. That
+is WHY the TerrainGate/DrainageGate/inversion-kernel work kept only TYING IDW --
+we chased the terrain signal in the wrong part of the model. RK-elev is a clean,
+principled, literature-standard terrain-aware win and is the new number to beat.
+
+--------------------------------------------------------------------------------
+(D) INVERSION-AWARE IDW KERNEL  -- built, A/B trended NULL, superseded by RK-elev
+--------------------------------------------------------------------------------
+Added to the IDW-prior kernel (eval_graphy_faithful.py): SIGNED vertical decay
+(--idw-h-up steep for sources above target / --idw-h-down gentle below: pollutant
+pools downhill) + an INVERSION CAP (--idw-cap z*, softness --idw-cap-w) cutting
+pairs that straddle the inversion. 16-run A/B on dense SLC (--wind zero):
+CTRL(symmetric) mean 4.130 (~2% under IDW); SIGN seed0 4.533 (WORSE). Killed the
+sweep early -- trending null and superseded by the RK-elev finding. Kernel code
+kept (backward-compatible; unset = old symmetric behavior). elev is in METRES
+(FEET_TO_M); z* band for SLC ~1350-1550m (valley floor 1284m, benches 1708m).
+
+--------------------------------------------------------------------------------
+(E) RK-ELEV-PRIOR HYBRID  -- corrector over the 3.65 floor (--rk-prior)
+--------------------------------------------------------------------------------
+Added --rk-prior: hybrid over the RK-elev prior instead of IDW (pred = RK-elev
+prior + faithful correction). Residual kernel aligned to the baseline (power-2)
+so the corrector actually stands on the 3.65 floor. Generalized all prior call
+sites (use_prior / prior_z selector).
+FINAL RESULT (4 seeds, 8000 steps): 3.815/3.698/4.126/4.021 -> 3.915 +- 0.168,
+i.e. ABOVE the RK-elev baseline (3.65). The neural corrector does NOT beat good
+interpolation. (A single 12k-step seed0 earlier hit 3.755 -- did not hold.)
+VERDICT: RK-elev baseline stays champion; the corrector is a net loss on SLC.
+
+--------------------------------------------------------------------------------
+(F) AOD SPATIAL-GRADIENT LOSS  -- SPIN's mechanism, built + wired + tested
+--------------------------------------------------------------------------------
+NEW: scripts/aod_loss.py -- aod_gradient_loss(): masked, SCALE-FREE gradient
+matching. For every graph edge whose both endpoints have a valid AOD retrieval
+this hour, z-score the pred-gradient and the AOD-gradient across valid edges and
+penalise the mismatch -> constrains the SHAPE of the field (spatial correlation
+with AOD), never the PM level, so it composes with MSE/hybrid-prior. Inert when
+<4 valid edges (night/cloud/no overpass). Self-test PASSED (tracks-AOD->~0,
+anti-correlated->~3.8, gradients flow).
+WIRED into eval_graphy_faithful.py behind --aod-weight (default 0 = off): main()
+loads AOD via bg.load_aod (already existed), aligns (T,N) value+mask to the graph,
+stashes on args; training step adds aod_weight * mean_over_batch(grad loss).
+SLC AOD FETCHED (user ran fetch_aod.py, EE project data-501920, MODIS MCD19A2):
+1656 rows, 29 retrieval days, 52% day-cell coverage, 27 days with >=2 sensors
+(-> gradient fires ~600 hrs). Much better coverage than the feared winter
+snow/cloud starvation. Smoke @800 steps ran clean (OURS 3.785, no divergence).
+A/B FINAL (scripts/sweep_slc_rk_aod.sh, 4 seeds x 8000 steps):
+    A  --rk-prior              OURS 3.915 +- 0.168
+    B  --rk-prior --aod 0.5    OURS 4.054 +- 0.143   <-- AOD loss HURT by ~0.14
+VERDICT: the AOD spatial-gradient loss HURTS on SLC winter. Physically sensible:
+MODIS AOD is a COLUMN measure, but winter inversions DECOUPLE surface PM from the
+column, so the AOD spatial gradient is a MISLEADING constraint exactly on the
+inversion stress case -- AOD supervision fails where the inversion is. A lighter
+weight might make it merely neutral, but the column/surface decoupling predicts no
+gain. This is a clean, publishable NEGATIVE result (and re-confirms our earlier
+"AOD redundant on inversions" note, now via the gradient-loss route, not features).
+
+--------------------------------------------------------------------------------
+CODE CHANGES THIS SESSION (all in scripts/eval_graphy_faithful.py unless noted)
+--------------------------------------------------------------------------------
+  * rk_elev_baseline() + --baselines-only   (elevation regression-kriging baseline)
+  * --rk-prior  + rk_prior_z() + use_prior/prior_z generalization  (RK-elev hybrid)
+  * signed/cap IDW kernel: --idw-h-up --idw-h-down --idw-cap --idw-cap-w
+  * --aod-weight  + AOD (T,N) load/align in main() + grad-loss term in train step
+  * scripts/aod_loss.py                      (NEW, self-testing module)
+  * scripts/sweep_slc_kernel.sh, scripts/sweep_slc_rk_aod.sh   (NEW sweeps)
+  * data/slc: densified pm25 (36 usable nodes), data/slc/aod/ (NEW)
+
+--------------------------------------------------------------------------------
+STANDINGS (dense SLC, --wind zero, 8-seed unless noted) & NEXT STEPS
+--------------------------------------------------------------------------------
+  RK-elev baseline   3.653 +- 0.476   <-- BEST, zero training  (the number to beat)
+  IDW baseline       4.063 +- 0.500
+  RK-prior hybrid    3.915 +- 0.168   -- corrector LOSES to RK-elev (final, 4 seed)
+  RK-prior + AOD 0.5 4.054 +- 0.143   -- AOD-gradient loss HURTS (final, 4 seed)
+SESSION VERDICT: the ONLY real win is RK-elev (terrain in the kriging MEAN, -10%
+vs IDW). Neural corrector and AOD-gradient loss both fail on SLC. The defensible
+paper claim shifts from "our GNN beats X" to "on complex-terrain low-density
+kriging, a classical elevation-drift regression-kriging beats IDW by 10% AND beats
+physics-GNN variants (GraPhy/hybrid) -- the terrain signal is in the MEAN function,
+and neither learned gates nor column-AOD supervision add value (the latter fails
+because winter inversions decouple surface PM from the AOD column)."
+NEXT (ranked):
+  1. FULL UNIVERSAL KRIGING: add x,y drift (and/or a proper variogram BLUP) to the
+     elevation-only RK -- most likely path to push the BEST number below 3.65.
+  2. Stand up IGNNK as a real learned-kriging baseline (context for 3.65 vs IDW).
+  3. Optional: --aod-weight 0.1 -- only to confirm HURT->neutral, not expected to help.
+  4. Fold the temporal-memory lever into this story (orthogonal to terrain).
+
+--------------------------------------------------------------------------------
+(G) TEMPORAL FEASIBILITY TEST  -- can a memory model beat the RIGHT baseline?
+--------------------------------------------------------------------------------
+Q (user): temporal baselines are strong (model benefits from memory) -> is beating
+them feasible? Ran eval_temporal.py on dense SLC (--wind zero, gap x6, 3 seeds),
+temporal vs memoryless(spatial-only) vs persistence, SAME eval each:
+    gap 24h:  temporal 4.00   memoryless(spatial) 4.46   persistence 6.39
+    gap 48h:  temporal 4.63   memoryless(spatial) 4.84   persistence 7.76
+FINDINGS:
+ * vs PERSISTENCE (weak baseline; neighbors still observed during a 1-sensor gap):
+   -37% (24h) -> -40% (48h). Win GROWS with gap (persistence goes stale). But this
+   is a STRAW MAN -- spatial kriging fills a 1-sensor gap from neighbors regardless.
+ * vs SPATIAL-ONLY KRIGING (the HONEST baseline): -10.2% (24h) -> -4.5% (48h).
+   Real but MODEST, and SHRINKS with gap (the sensor's own lag features go stale as
+   the gap lengthens -> temporal adds less, spatial dominates). Honest sweet spot
+   ~24h, NOT 48-72h.
+ * The old "-34% temporal" (memory note) was PITTSBURGH (flatter/denser); on hard
+   sparse SLC terrain it is only ~10%. Temporal edge is CITY/DENSITY dependent --
+   do NOT quote -34% as universal. Record corrected.
+VERDICT: beating the honest temporal baseline (spatial kriging) IS feasible with
+memory, but the SLC margin is ~10% @24h, not a knockout. Best play = COMBINE the
+RK-elev terrain-mean prior (wins in space) + temporal memory (wins in time): they
+attack different baseline blind spots and neither needs the unreachable 2.38.
+NOT yet done: spatiotemporal-KRIGING baseline (space+time, IGNNK-style) would be
+the gold-standard baseline to beat; real HRRR wind (untested, kriging-can't-see-it
+lever); corr-reg anchor BUILT this session (not yet swept); K-fold NOT built (the multi-seed
+runs are Monte-Carlo random-gap resampling, not K-fold CV).
+
+--------------------------------------------------------------------------------
+(H) COMBINED RK-ELEV + TEMPORAL  -- *** THE GNN FINALLY BEATS THE STRONG BASELINE ***
+--------------------------------------------------------------------------------
+Built into eval_temporal.py: --rk-spatial (RK-elev elevation-drift prior replaces
+plain spatial IDW as the temporal prior's spatial component) + an ST-KRIGING
+BASELINE = the prior-only prediction (learned blend b*persistence + (1-b)*RK-elev,
+NO GNN correction). This is the honest gold-standard: a space+time interpolator
+using BOTH terrain-mean and temporal memory. OURS = that prior + GNN correction.
+
+RESULT (dense SLC, --wind zero, gap x6, 3 seeds, PAIRED same-gap comparison):
+    gap 24h:  OURS 3.690   ST-kriging 3.972   persistence 6.386   -> OURS -7.1%
+    gap 48h:  OURS 4.370   ST-kriging 4.611   persistence 7.761   -> OURS -5.2%
+The GNN correction beats the strong ST-kriging baseline by 5-7%, WINNING ALL 6
+seed x gap cells (paired -> robust despite only 3 seeds). learned b~0.31-0.34
+(leans spatial RK-elev over persistence, correctly).
+
+*** THIS IS THE DEFENSIBLE WIN OF THE PROJECT ***: a physics-GNN with a terrain-
+mean prior + temporal memory BEATS a strong spatiotemporal-kriging baseline (which
+already uses terrain + persistence) by 5-7%, consistently, on complex terrain.
+No straw man (ST-kriging is the strongest honest baseline), no unreachable 2.38.
+The GNN earns its keep ONLY when (1) anchored on a strong prior, (2) given temporal
+memory, (3) on the temporal-gap task where it has an information edge over static
+kriging -- which is exactly the regime the IGNNK paper says GNNs beat kriging.
+
+TIGHTEN NEXT: more seeds / K-fold (std ~0.4 -> the paired win is already clean but
+tighter CIs help the writeup); add real HRRR wind (another kriging-blind lever);
+corr-reg sweep; report OURS-vs-ST-kriging as the headline metric, not absolute MAE.
+
+--------------------------------------------------------------------------------
+(H2) CONFIRMATION: 8 seeds x 2 cities x WIND  -- the win HOLDS and GENERALIZES
+--------------------------------------------------------------------------------
+Re-fetched SLC HRRR wind for the dense net (was 14/36 nodes -> now 36/36, Open-
+Meteo, 2184 hrs each). Ran combined RK-elev+temporal WITH --wind hrrr, 8 seeds,
+gaps 24h/48h, on SLC (terrain) AND Pittsburgh (flatter/denser, 95 nodes, 158m
+spread). scripts/confirm_combined.sh.
+    city         gap   OURS    ST-kriging  persist   OURS vs ST-kriging
+    SLC          24h   3.922   4.242       6.690     -7.5%
+    SLC          48h   4.377   4.597       7.653     -4.8%
+    Pittsburgh   24h   3.781   4.339       5.622     -12.9%
+    Pittsburgh   48h   4.373   4.751       6.605     -7.9%
+FINDINGS:
+ 1. HOLDS at 8 seeds on SLC (-7.5/-4.8%, CIs tighter: std ~0.23-0.47). Not a fluke.
+ 2. GENERALIZES to Pittsburgh and is BIGGER there (-12.9/-7.9%). Two cities now.
+    GNN edge is larger on the denser/more-dynamic city; learned blend leans more
+    temporal there (b~0.49 vs SLC ~0.31) -> more temporal signal for the GNN to use.
+ 3. WIND IS NOT THE LEVER (honest): SLC 24h margin -7.5% WITH full wind vs -7.1%
+    with --wind zero -> wind adds ~nothing to the GNN's edge. The win comes from the
+    terrain-mean (RK-elev) prior + temporal memory + the GNN's nonlinear correction,
+    NOT advection. (Only the GNN correction sees wind; the prior/baseline don't.)
+STATUS: this is the project's headline result -- a physics-GNN beating a strong
+spatiotemporal-kriging baseline by 5-13% across 2 cities, 2 gap lengths, 8 seeds.
+Still Monte-Carlo (random gaps per seed), NOT K-fold -- K-fold not built; the paired
+same-gap comparison already makes each cell robust.
+
+================================================================================
+2026-07-13 (I) -- K-FOLD CV + FRESNO: closing the last rigor gap
+================================================================================
+BUILT: scripts/eval_temporal.py --kfold K. Proper K-fold TEST partition over the
+fixed-length gap windows (kfold_gaps): each sensor's timeline is tiled into
+consecutive non-overlapping fully-observed windows of length gap_len; the j-th
+clean window -> fold (j % K). Every clean window is held out EXACTLY ONCE across
+folds (union = all clean windows, folds mutually disjoint) -- a true partition,
+no random test overlap. Train gaps stay MC-style (random subset of the non-test
+region) so the KNOWN set stays dense; only TEST selection becomes exhaustive CV.
+run_seed(..., masks=fold_test_mask); main() loops folds instead of seeds when
+--kfold>1. Verified: sum(test_cells) ~= all clean windows, folds non-overlapping.
+scripts/confirm_kfold.sh = 3 cities x {24,48}h x 5-fold.
+
+RESULT (5-fold CV, --wind hrrr, --temporal --rk-spatial, full 120 epochs):
+  city        gap   OURS MAE      ST-kriging   OURS vs ST-krig   folds won
+  fresno      24h   4.16 +-0.10   4.49         -7.2%             5/5
+  fresno      48h   4.75 +-0.41   5.06         -6.1%             5/5
+  slc         24h   5.94 +-1.24   6.14         -3.3%             5/5
+  slc         48h   7.41 +-1.37   7.54         -1.8%             5/5
+  pittsburgh  24h   3.89 +-0.09   4.32         -9.9%             5/5
+  pittsburgh  48h   4.28 +-0.25   4.66         -8.2%             5/5
+=> OURS beats the strong space+time baseline in ALL 30/30 folds. Sign holds
+   everywhere; magnitude scales with data richness (Pgh dense -8/-10% > fresno
+   -6/-7% > slc sparse terrain -2/-3%) -- exactly the IGNNK regime (GNN earns
+   more the more spatiotemporal signal it is fed).
+
+TWO THINGS K-FOLD SURFACED THAT MONTE-CARLO HID (honesty):
+  1. SLC absolute MAE is HIGHER and the margin THINNER under K-fold (-1.8/-3.3%)
+     than under MC 8-seed (-4.8/-7.5%). Exhaustive coverage forces testing EVERY
+     clean window incl. the brutal winter-inversion swings MC's 6 random gaps
+     under-sampled. Win still holds every fold, but SLC is the genuinely hard,
+     sparse regime where the GNN's temporal edge is smallest.
+  2. Fresno (NEW, GraPhy's OWN city): -7.2%/-6.1% under proper 5-fold. GraPhy's
+     2.38 is on the memoryless SPATIAL task; the long-gap TEMPORAL axis is what
+     its design leaves open. We fill exactly that gap and beat a strong space+
+     time kriging baseline on GraPhy's home turf. This is the clean framing.
+
+STATUS: K-fold was the last rigor gap (flagged repeatedly). Now closed. Headline
+is publication-clean: a physics-GNN with terrain-mean prior + temporal memory
+beats a strong spatiotemporal-kriging baseline by 2-10% across 3 cities x 2 gap
+lengths, winning every one of 30 CV folds.

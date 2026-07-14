@@ -150,9 +150,12 @@ CITY_CONFIG = {
         groups={
             "urban": dict(
                 purple_air_dir=DATA_DIR / "slc" / "pm25" / "urban",
-                # no wind data yet: these paths don't exist, load_wind zero-fills.
                 wind_zip=DATA_DIR / "slc" / "wind" / "none.zip",
                 wind_dir=DATA_DIR / "slc" / "wind" / "urban",
+                # HRRR 10m wind fetched per SLC sensor id (scripts/fetch_wind_hrrr.py
+                # --city slc). Enables --wind hrrr -> the convection module + the
+                # directional drainage gate finally have real wind on terrain.
+                wind_hrrr_dir=DATA_DIR / "slc" / "wind_hrrr",
             ),
         },
     ),
@@ -162,14 +165,14 @@ CITY_CONFIG = {
     # (Open-Meteo) sampled per sensor; ERA5 path is left unset (load_wind falls
     # back to zero-fill if the hrrr dir is chosen via WIND_SOURCE).
     "fresno": dict(
-        coords_file=DATA_DIR / "fresno" / "coords" / "sensor_lat_long_alt",
+        coords_file=DATA_DIR / "fresno_variants" / "fresno" / "coords" / "sensor_lat_long_alt",
         utm_crs="EPSG:32611",          # UTM zone 11N (Central California)
         groups={
             "urban": dict(
-                purple_air_dir=DATA_DIR / "fresno" / "pm25" / "urban",
-                wind_zip=DATA_DIR / "fresno" / "wind" / "none.zip",
-                wind_dir=DATA_DIR / "fresno" / "wind" / "urban",
-                wind_hrrr_dir=DATA_DIR / "fresno" / "wind_hrrr",
+                purple_air_dir=DATA_DIR / "fresno_variants" / "fresno" / "pm25" / "urban",
+                wind_zip=DATA_DIR / "fresno_variants" / "fresno" / "wind" / "none.zip",
+                wind_dir=DATA_DIR / "fresno_variants" / "fresno" / "wind" / "urban",
+                wind_hrrr_dir=DATA_DIR / "fresno_variants" / "fresno" / "wind_hrrr",
             ),
         },
     ),
@@ -180,15 +183,15 @@ CITY_CONFIG = {
     # runs --no-convection (wind feeds only the convection module). EPA extra-fields
     # fetched, so EPA_CORRECT works.
     "fresno_dense": dict(
-        coords_file=DATA_DIR / "fresno_dense" / "coords" / "sensor_lat_long_alt",
+        coords_file=DATA_DIR / "fresno_variants" / "fresno_dense" / "coords" / "sensor_lat_long_alt",
         utm_crs="EPSG:32611",          # UTM zone 11N (Central California)
         groups={
             "urban": dict(
-                purple_air_dir=DATA_DIR / "fresno_dense" / "pm25" / "urban",
-                wind_zip=DATA_DIR / "fresno_dense" / "wind" / "none.zip",
-                wind_dir=DATA_DIR / "fresno_dense" / "wind" / "urban",
-                # HRRR wind keyed by sensor-id (data/fresno); dense reuses same ids.
-                wind_hrrr_dir=DATA_DIR / "fresno" / "wind_hrrr",
+                purple_air_dir=DATA_DIR / "fresno_variants" / "fresno_dense" / "pm25" / "urban",
+                wind_zip=DATA_DIR / "fresno_variants" / "fresno_dense" / "wind" / "none.zip",
+                wind_dir=DATA_DIR / "fresno_variants" / "fresno_dense" / "wind" / "urban",
+                # HRRR wind keyed by sensor-id (data/fresno_variants/fresno); dense reuses same ids.
+                wind_hrrr_dir=DATA_DIR / "fresno_variants" / "fresno" / "wind_hrrr",
             ),
         },
     ),
@@ -197,30 +200,30 @@ CITY_CONFIG = {
     # _ab = strict drop (corr<0.9 OR >10% cells disagree); _abc = conservative (corr<0.9
     # only, keeps high-corr sensors that just read noisy during high-PM hours).
     "fresno_dense_ab": dict(
-        coords_file=DATA_DIR / "fresno_dense_ab" / "coords" / "sensor_lat_long_alt",
+        coords_file=DATA_DIR / "fresno_variants" / "fresno_dense_ab" / "coords" / "sensor_lat_long_alt",
         utm_crs="EPSG:32611",          # UTM zone 11N (Central California)
         groups={
             "urban": dict(
-                purple_air_dir=DATA_DIR / "fresno_dense_ab" / "pm25" / "urban",
-                wind_zip=DATA_DIR / "fresno_dense_ab" / "wind" / "none.zip",
-                wind_dir=DATA_DIR / "fresno_dense_ab" / "wind" / "urban",
+                purple_air_dir=DATA_DIR / "fresno_variants" / "fresno_dense_ab" / "pm25" / "urban",
+                wind_zip=DATA_DIR / "fresno_variants" / "fresno_dense_ab" / "wind" / "none.zip",
+                wind_dir=DATA_DIR / "fresno_variants" / "fresno_dense_ab" / "wind" / "urban",
             ),
         },
     ),
     "fresno_dense_abc": dict(
-        coords_file=DATA_DIR / "fresno_dense_abc" / "coords" / "sensor_lat_long_alt",
+        coords_file=DATA_DIR / "fresno_variants" / "fresno_dense_abc" / "coords" / "sensor_lat_long_alt",
         utm_crs="EPSG:32611",
         groups={
             "urban": dict(
-                purple_air_dir=DATA_DIR / "fresno_dense_abc" / "pm25" / "urban",
-                wind_zip=DATA_DIR / "fresno_dense_abc" / "wind" / "none.zip",
-                wind_dir=DATA_DIR / "fresno_dense_abc" / "wind" / "urban",
-                # HRRR 3km wind is fetched once per sensor-id under data/fresno
+                purple_air_dir=DATA_DIR / "fresno_variants" / "fresno_dense_abc" / "pm25" / "urban",
+                wind_zip=DATA_DIR / "fresno_variants" / "fresno_dense_abc" / "wind" / "none.zip",
+                wind_dir=DATA_DIR / "fresno_variants" / "fresno_dense_abc" / "wind" / "urban",
+                # HRRR 3km wind is fetched once per sensor-id under data/fresno_variants/fresno
                 # (scripts/fetch_wind_hrrr.py). dense_abc reuses those same sensor
                 # ids, so point --wind hrrr here; unmatched sensors zero-fill.
                 # Needed by the FAITHFUL GraPhy convection module (the IDW-residual
                 # path runs --wind zero because convection was inert there).
-                wind_hrrr_dir=DATA_DIR / "fresno" / "wind_hrrr",
+                wind_hrrr_dir=DATA_DIR / "fresno_variants" / "fresno" / "wind_hrrr",
             ),
         },
     ),
@@ -229,13 +232,13 @@ CITY_CONFIG = {
     # when that channel tracks the city PM signal (corr-to-city >= threshold). Recovers
     # density lost to QA at zero credit cost.
     "fresno_dense_abc_rec": dict(
-        coords_file=DATA_DIR / "fresno_dense_abc_rec" / "coords" / "sensor_lat_long_alt",
+        coords_file=DATA_DIR / "fresno_variants" / "fresno_dense_abc_rec" / "coords" / "sensor_lat_long_alt",
         utm_crs="EPSG:32611",
         groups={
             "urban": dict(
-                purple_air_dir=DATA_DIR / "fresno_dense_abc_rec" / "pm25" / "urban",
-                wind_zip=DATA_DIR / "fresno_dense_abc_rec" / "wind" / "none.zip",
-                wind_dir=DATA_DIR / "fresno_dense_abc_rec" / "wind" / "urban",
+                purple_air_dir=DATA_DIR / "fresno_variants" / "fresno_dense_abc_rec" / "pm25" / "urban",
+                wind_zip=DATA_DIR / "fresno_variants" / "fresno_dense_abc_rec" / "wind" / "none.zip",
+                wind_dir=DATA_DIR / "fresno_variants" / "fresno_dense_abc_rec" / "wind" / "urban",
             ),
         },
     ),
@@ -244,14 +247,14 @@ CITY_CONFIG = {
     # empty stubs after last session's HTTP-402 mid-fetch, and carries the a/b laser
     # channels in-file so A/B QA runs on the FULL set. Matches GraPhy's ~41-node density.
     "fresno_full": dict(
-        coords_file=DATA_DIR / "fresno_full" / "coords" / "sensor_lat_long_alt",
+        coords_file=DATA_DIR / "fresno_variants" / "fresno_full" / "coords" / "sensor_lat_long_alt",
         utm_crs="EPSG:32611",
         groups={
             "urban": dict(
-                purple_air_dir=DATA_DIR / "fresno_full" / "pm25" / "urban",
-                wind_zip=DATA_DIR / "fresno_full" / "wind" / "none.zip",
-                wind_dir=DATA_DIR / "fresno_full" / "wind" / "urban",
-                wind_hrrr_dir=DATA_DIR / "fresno" / "wind_hrrr",
+                purple_air_dir=DATA_DIR / "fresno_variants" / "fresno_full" / "pm25" / "urban",
+                wind_zip=DATA_DIR / "fresno_variants" / "fresno_full" / "wind" / "none.zip",
+                wind_dir=DATA_DIR / "fresno_variants" / "fresno_full" / "wind" / "urban",
+                wind_hrrr_dir=DATA_DIR / "fresno_variants" / "fresno" / "wind_hrrr",
             ),
         },
     ),
@@ -259,14 +262,14 @@ CITY_CONFIG = {
     # spread, still mostly valley). Supplements fresno_full's 43 with ~10 outer-ring sensors
     # to push toward GraPhy's 41-node density. Built = new ring fetch + copied fresno_full CSVs.
     "fresno_med": dict(
-        coords_file=DATA_DIR / "fresno_med" / "coords" / "sensor_lat_long_alt",
+        coords_file=DATA_DIR / "fresno_variants" / "fresno_med" / "coords" / "sensor_lat_long_alt",
         utm_crs="EPSG:32611",
         groups={
             "urban": dict(
-                purple_air_dir=DATA_DIR / "fresno_med" / "pm25" / "urban",
-                wind_zip=DATA_DIR / "fresno_med" / "wind" / "none.zip",
-                wind_dir=DATA_DIR / "fresno_med" / "wind" / "urban",
-                wind_hrrr_dir=DATA_DIR / "fresno" / "wind_hrrr",
+                purple_air_dir=DATA_DIR / "fresno_variants" / "fresno_med" / "pm25" / "urban",
+                wind_zip=DATA_DIR / "fresno_variants" / "fresno_med" / "wind" / "none.zip",
+                wind_dir=DATA_DIR / "fresno_variants" / "fresno_med" / "wind" / "urban",
+                wind_hrrr_dir=DATA_DIR / "fresno_variants" / "fresno" / "wind_hrrr",
             ),
         },
     ),
@@ -275,28 +278,28 @@ CITY_CONFIG = {
     # keep intermittent-disagreement / single-healthy-channel ones. 32 usable (~28-30 nodes)
     # -> matches GraPhy's 28 train sensors, the density the pure model needs to converge.
     "fresno_med_max": dict(
-        coords_file=DATA_DIR / "fresno_med_max" / "coords" / "sensor_lat_long_alt",
+        coords_file=DATA_DIR / "fresno_variants" / "fresno_med_max" / "coords" / "sensor_lat_long_alt",
         utm_crs="EPSG:32611",
         groups={
             "urban": dict(
-                purple_air_dir=DATA_DIR / "fresno_med_max" / "pm25" / "urban",
-                wind_zip=DATA_DIR / "fresno_med_max" / "wind" / "none.zip",
-                wind_dir=DATA_DIR / "fresno_med_max" / "wind" / "urban",
-                wind_hrrr_dir=DATA_DIR / "fresno" / "wind_hrrr",
+                purple_air_dir=DATA_DIR / "fresno_variants" / "fresno_med_max" / "pm25" / "urban",
+                wind_zip=DATA_DIR / "fresno_variants" / "fresno_med_max" / "wind" / "none.zip",
+                wind_dir=DATA_DIR / "fresno_variants" / "fresno_med_max" / "wind" / "urban",
+                wind_hrrr_dir=DATA_DIR / "fresno_variants" / "fresno" / "wind_hrrr",
             ),
         },
     ),
     # fresno_med after A/B QA (apply_ab_qa.py --src fresno_med --ab fresno_med
     # --out-name fresno_med_abc). The widest clean network we can assemble for Oct23-Jan24.
     "fresno_med_abc": dict(
-        coords_file=DATA_DIR / "fresno_med_abc" / "coords" / "sensor_lat_long_alt",
+        coords_file=DATA_DIR / "fresno_variants" / "fresno_med_abc" / "coords" / "sensor_lat_long_alt",
         utm_crs="EPSG:32611",
         groups={
             "urban": dict(
-                purple_air_dir=DATA_DIR / "fresno_med_abc" / "pm25" / "urban",
-                wind_zip=DATA_DIR / "fresno_med_abc" / "wind" / "none.zip",
-                wind_dir=DATA_DIR / "fresno_med_abc" / "wind" / "urban",
-                wind_hrrr_dir=DATA_DIR / "fresno" / "wind_hrrr",
+                purple_air_dir=DATA_DIR / "fresno_variants" / "fresno_med_abc" / "pm25" / "urban",
+                wind_zip=DATA_DIR / "fresno_variants" / "fresno_med_abc" / "wind" / "none.zip",
+                wind_dir=DATA_DIR / "fresno_variants" / "fresno_med_abc" / "wind" / "urban",
+                wind_hrrr_dir=DATA_DIR / "fresno_variants" / "fresno" / "wind_hrrr",
             ),
         },
     ),
@@ -304,14 +307,14 @@ CITY_CONFIG = {
     # --ab fresno_full --out-name fresno_full_abc): malfunctioning-channel sensors dropped,
     # disagreeing cells blanked. The clean high-density network to chase GraPhy's 2.38.
     "fresno_full_abc": dict(
-        coords_file=DATA_DIR / "fresno_full_abc" / "coords" / "sensor_lat_long_alt",
+        coords_file=DATA_DIR / "fresno_variants" / "fresno_full_abc" / "coords" / "sensor_lat_long_alt",
         utm_crs="EPSG:32611",
         groups={
             "urban": dict(
-                purple_air_dir=DATA_DIR / "fresno_full_abc" / "pm25" / "urban",
-                wind_zip=DATA_DIR / "fresno_full_abc" / "wind" / "none.zip",
-                wind_dir=DATA_DIR / "fresno_full_abc" / "wind" / "urban",
-                wind_hrrr_dir=DATA_DIR / "fresno" / "wind_hrrr",
+                purple_air_dir=DATA_DIR / "fresno_variants" / "fresno_full_abc" / "pm25" / "urban",
+                wind_zip=DATA_DIR / "fresno_variants" / "fresno_full_abc" / "wind" / "none.zip",
+                wind_dir=DATA_DIR / "fresno_variants" / "fresno_full_abc" / "wind" / "urban",
+                wind_hrrr_dir=DATA_DIR / "fresno_variants" / "fresno" / "wind_hrrr",
             ),
         },
     ),

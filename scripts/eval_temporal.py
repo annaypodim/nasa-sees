@@ -84,7 +84,29 @@ def make_gaps(obs, N, T, gap_len, n_gaps, rng):
     return mask
 
 
-def run_seed(seed, graph, args):
+def kfold_gaps(obs, N, T, gap_len, K):
+    """Proper K-fold TEST partition over fixed-length gap windows.
+    Tile each sensor's timeline into consecutive non-overlapping fully-observed
+    windows of length gap_len; assign the j-th clean window of a sensor to fold
+    (j % K). Returns K mutually-disjoint [T,N] boolean test masks whose union is
+    every clean window -> every held-out cell is tested exactly once across folds.
+    Sensor-interleaved (j % K) so each fold draws from every sensor & time region."""
+    folds = [np.zeros((T, N), dtype=bool) for _ in range(K)]
+    for n in range(N):
+        col = obs[:, n]
+        s = 0
+        j = 0
+        while s + gap_len <= T:
+            if col[s:s + gap_len].all():
+                folds[j % K][s:s + gap_len, n] = True
+                s += gap_len
+                j += 1
+            else:
+                s += 1                      # slide to the next clean window
+    return folds
+
+
+def run_seed(seed, graph, args, masks=None):
     (ids, pm, observed, edge_index, edge_weight, edge_attr_t, edge_delev, elev,
      x_m, y_m, has_wind, temp_wide, has_temp) = graph
     N, T = len(ids), len(pm)
@@ -102,7 +124,12 @@ def run_seed(seed, graph, args):
         tv = np.log1p(values); inv = lambda r: np.clip(np.expm1(r), 0, None)
 
     # ---- gaps: disjoint TEST and TRAIN target windows ---------------------------
-    test_gap = make_gaps(obs, N, T, args.gap_len, args.n_gaps, rng)
+    # K-fold mode passes a fixed TEST partition mask; train gaps stay MC-style
+    # (random subset of the non-test region) so the KNOWN set stays dense.
+    if masks is not None:
+        test_gap = masks
+    else:
+        test_gap = make_gaps(obs, N, T, args.gap_len, args.n_gaps, rng)
     train_gap = make_gaps(obs & ~test_gap, N, T, args.gap_len, args.n_gaps * 3, rng)
     known = obs & ~test_gap & ~train_gap          # what any feature/prior may see
 
@@ -123,9 +150,11 @@ def run_seed(seed, graph, args):
     test_t = torch.tensor(test_gap)
     train_t = torch.tensor(train_gap)
 
-    # lag features from known_z (leak-free): lag1, lag24
+    # lag features from known_z (leak-free): lag1, lag24, (+lag48, lag168 weekly)
     lag1 = torch.zeros_like(knownz_t); lag1[1:] = knownz_t[:-1]
     lag24 = torch.zeros_like(knownz_t); lag24[24:] = knownz_t[:-24]
+    lag48 = torch.zeros_like(knownz_t); lag48[48:] = knownz_t[:-48]
+    lag168 = torch.zeros_like(knownz_t); lag168[168:] = knownz_t[:-168]
 
     # ---- SPATIAL IDW prior kernel (optionally terrain-aware, from eval_inductive) --
     dmat = np.hypot(x_m[:, None] - x_m[None, :], y_m[:, None] - y_m[None, :])
@@ -141,6 +170,23 @@ def run_seed(seed, graph, args):
         num = Wmat @ (z_t[t] * vis)
         den = (Wmat @ vis).clamp(min=1e-9)
         return num / den
+
+    # RK-elev spatial prior (--rk-spatial): OLS elevation-drift trend over the
+    # visible KNOWN nodes + IDW of the residual. The terrain-mean win (beats plain
+    # IDW ~10% inductively) brought into the temporal task's spatial component.
+    elev_tt = torch.tensor(np.asarray(elev, dtype=np.float64), dtype=torch.float)
+
+    def spatial_rk(t, vis_bool):
+        idx = vis_bool.nonzero().squeeze(1)
+        if idx.numel() < 3:
+            return spatial_idw(t, vis_bool)
+        zc = z_t[t][idx]
+        A = torch.stack([torch.ones_like(elev_tt[idx]), elev_tt[idx]], dim=1)
+        beta_rk = torch.linalg.lstsq(A, zc.unsqueeze(1)).solution.squeeze(1)
+        resid = zc - A @ beta_rk
+        r_full = torch.zeros(N).scatter(0, idx, resid)
+        r_idw = (Wmat @ r_full) / (Wmat @ vis_bool.float()).clamp(min=1e-9)
+        return (beta_rk[0] + beta_rk[1] * elev_tt) + r_idw
 
     # ---- temperature gate input (per-node standardized temp) --------------------
     temp_z_t = None
@@ -168,7 +214,8 @@ def run_seed(seed, graph, args):
 
     # node features: [pm(masked), (persistence, lag1, lag24 if temporal), (aod)]
     use_temporal = args.temporal
-    node_in = 1 + (3 if use_temporal else 0) + int(args.aod_feature)
+    long_lags = use_temporal and args.long_lags
+    node_in = 1 + (3 if use_temporal else 0) + (2 if long_lags else 0) + int(args.aod_feature)
 
     def node_features(t, hide_mask):
         x = knownz_t[t].reshape(-1, 1).clone()   # start from best-known estimate
@@ -176,6 +223,8 @@ def run_seed(seed, graph, args):
         cols = [x]
         if use_temporal:
             cols += [cf_t[t].reshape(-1, 1), lag1[t].reshape(-1, 1), lag24[t].reshape(-1, 1)]
+        if long_lags:
+            cols += [lag48[t].reshape(-1, 1), lag168[t].reshape(-1, 1)]
         if aod_z_t is not None:
             cols.append(aod_z_t[t].reshape(-1, 1))
         return torch.cat(cols, dim=1)
@@ -192,7 +241,7 @@ def run_seed(seed, graph, args):
                else torch.nn.MSELoss())
 
     def prior(t, vis_bool):
-        sp = spatial_idw(t, vis_bool)
+        sp = spatial_rk(t, vis_bool) if args.rk_spatial else spatial_idw(t, vis_bool)
         if not use_temporal:
             return sp
         b = torch.sigmoid(beta)
@@ -227,7 +276,7 @@ def run_seed(seed, graph, args):
         opt.step()
 
     # -------- eval on TEST gap cells --------------------------------------------
-    model.eval(); trues, preds, persist_p = [], [], []
+    model.eval(); trues, preds, persist_p, stk_p = [], [], [], []
     test_hours = np.where(test_gap.any(axis=1))[0]
     with torch.no_grad():
         for t in test_hours:
@@ -236,15 +285,18 @@ def run_seed(seed, graph, args):
             x = node_features(int(t), targets)
             out = model(x, edge_index, edge_weight, edge_attr_t[t], delev,
                         None if temp_z_t is None else temp_z_t[t])[:, 0]
-            pred = prior(int(t), vis) + out
+            pr = prior(int(t), vis)                             # ST-kriging (no GNN)
+            pred = pr + out
             for node in targets:
                 trues.append(to_ug(z[t, node]))
                 preds.append(to_ug(pred[node].item()))
                 persist_p.append(to_ug(cf[t, node]))           # persistence floor
-    trues, preds, persist_p = map(np.array, (trues, preds, persist_p))
+                stk_p.append(to_ug(pr[node].item()))           # spatiotemporal-kriging
+    trues, preds, persist_p, stk_p = map(np.array, (trues, preds, persist_p, stk_p))
     m = metrics(trues, preds)
     m_persist = metrics(trues, persist_p)
-    return m, m_persist, float(torch.sigmoid(beta))
+    m_stk = metrics(trues, stk_p)                              # the HONEST baseline
+    return m, m_persist, float(torch.sigmoid(beta)), m_stk
 
 
 def main():
@@ -253,6 +305,11 @@ def main():
     ap.add_argument("--sensor-set", default="urban")
     ap.add_argument("--wind", choices=["era5", "hrrr", "zero"], default="hrrr")
     ap.add_argument("--seeds", default="0,1,2,3")
+    ap.add_argument("--kfold", type=int, default=0,
+                    help="if >0, run proper K-fold CV: partition the fixed-length gap "
+                         "windows into K disjoint TEST folds (every clean window held "
+                         "out exactly once) instead of Monte-Carlo random gaps. "
+                         "Overrides --seeds/--n-gaps for TEST selection.")
     ap.add_argument("--epochs", type=int, default=120)
     ap.add_argument("--steps", type=int, default=96)
     ap.add_argument("--hidden", type=int, default=16)
@@ -269,11 +326,20 @@ def main():
     ap.add_argument("--no-local", action="store_true")
     ap.add_argument("--temporal", action="store_true",
                     help="add temporal memory: persistence prior blend + lag features")
+    ap.add_argument("--long-lags", action="store_true",
+                    help="add lag48 + lag168 (weekly) node features on top of --temporal. "
+                         "Targets long-gap regimes where carry-forward persistence goes "
+                         "stale (esp. sparse terrain / SLC).")
     ap.add_argument("--temp-gate", action="store_true")
     ap.add_argument("--aod-feature", action="store_true")
     ap.add_argument("--elev-gate", action="store_true")
     ap.add_argument("--elev-kernel", action="store_true")
     ap.add_argument("--elev-kernel-h", type=float, default=150.0)
+    ap.add_argument("--rk-spatial", action="store_true",
+                    help="use the RK-elev (elevation-drift regression-kriging) spatial "
+                         "prior instead of plain spatial IDW. Combines the terrain-mean "
+                         "win with temporal memory; the prior-only prediction is reported "
+                         "as the ST-kriging baseline (the honest space+time floor to beat).")
     args = ap.parse_args()
 
     bg.use_city(args.city); bg.SENSOR_SET = args.sensor_set; bg.EPA_CORRECT = True
@@ -282,22 +348,44 @@ def main():
           f"temporal={args.temporal} temp_gate={args.temp_gate} aod={args.aod_feature}")
     graph = tr.build_static_graph()
 
-    seeds = [int(s) for s in args.seeds.split(",")]
-    ours, pers, blends = [], [], []
-    for s in seeds:
-        m, mp, b = run_seed(s, graph, args)
-        ours.append(m); pers.append(mp); blends.append(b)
-        print(f"  seed {s}: OURS mae={m['mae']:.3f} r2={m['r2']:.3f} (n={m['n']})   "
-              f"persistence mae={mp['mae']:.3f}   prior_blend b={b:.2f}")
+    ours, pers, blends, stks = [], [], [], []
+    if args.kfold and args.kfold > 1:
+        (ids, pm, observed, *_rest) = graph
+        obs = observed.to_numpy()
+        N, T = len(ids), len(pm)
+        folds = kfold_gaps(obs, N, T, args.gap_len, args.kfold)
+        units = "folds"
+        labels = list(range(args.kfold))
+        for k in labels:
+            ncells = int(folds[k].sum())
+            m, mp, b, mstk = run_seed(k, graph, args, masks=folds[k])
+            ours.append(m); pers.append(mp); blends.append(b); stks.append(mstk)
+            print(f"  fold {k}/{args.kfold}: OURS mae={m['mae']:.3f}  ST-krig mae={mstk['mae']:.3f}  "
+                  f"persist mae={mp['mae']:.3f}  (n={m['n']}, test_cells={ncells})  b={b:.2f}")
+    else:
+        labels = [int(s) for s in args.seeds.split(",")]
+        units = "seeds"
+        for s in labels:
+            m, mp, b, mstk = run_seed(s, graph, args)
+            ours.append(m); pers.append(mp); blends.append(b); stks.append(mstk)
+            print(f"  seed {s}: OURS mae={m['mae']:.3f}  ST-krig mae={mstk['mae']:.3f}  "
+                  f"persist mae={mp['mae']:.3f}  (n={m['n']})  prior_blend b={b:.2f}")
 
     def agg(rows, k):
         v = np.array([r[k] for r in rows]); return v.mean(), v.std()
+    cv = f"{args.kfold}-fold CV" if (args.kfold and args.kfold > 1) else f"MC {units}={labels}"
     print("\n" + "=" * 68)
-    print(f"TEMPORAL GAP-FILL  city={args.city}  gap={args.gap_len}h x{args.n_gaps}  seeds={seeds}")
+    print(f"TEMPORAL GAP-FILL  city={args.city}  gap={args.gap_len}h  "
+          f"rk_spatial={args.rk_spatial}  [{cv}]")
     print("=" * 68)
-    for name, rows in [("OURS (GraPhyNet)", ours), ("Persistence floor", pers)]:
+    for name, rows in [("OURS (GraPhyNet)", ours),
+                       ("ST-kriging baseline", stks),
+                       ("Persistence floor", pers)]:
         mae_m, mae_s = agg(rows, "mae"); r2_m, _ = agg(rows, "r2")
         print(f"{name:22s} MAE={mae_m:.3f}±{mae_s:.3f}  R2={r2_m:.3f}")
+    om, _ = agg(ours, "mae"); sm, _ = agg(stks, "mae")
+    print(f"OURS vs ST-kriging: {(om/sm - 1)*100:+.1f}%   "
+          f"(<0 = GNN beats the strong space+time baseline)")
     print(f"mean learned prior blend b (persistence weight) = {np.mean(blends):.2f}")
 
 
