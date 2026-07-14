@@ -6,9 +6,9 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
 args = sys.argv[1:]
-out = next((a for a in args if a.endswith(".png")), "faithful_logs/convergence_curve.png")
+out = next((a for a in args if a.endswith(".png")), "experiments/logs/faithful/convergence_curve.png")
 paths = [a for a in args if a.endswith(".csv")] or \
-        sorted(glob.glob("faithful_logs/curve_*/val_curve_seed*.csv"))
+        sorted(glob.glob("experiments/logs/faithful/curve_*/val_curve_seed*.csv"))
 fig, ax = plt.subplots(figsize=(9, 5.2))
 
 for p in paths:

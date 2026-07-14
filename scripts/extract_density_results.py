@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
-"""Rebuild density_sweep_logs/results.csv from the per-run logs (robust to the inline
+"""Rebuild experiments/logs/density_sweep/results.csv from the per-run logs (robust to the inline
 parse bug: the summary line has multiple spaces before MAE=). One row per {config}_N{N}_ss{ss}
 log that finished. Safe to re-run anytime; overwrites the CSV from whatever logs exist."""
 import re
 from pathlib import Path
 
-LOGDIR = Path(__file__).resolve().parents[1] / "density_sweep_logs"
+LOGDIR = Path(__file__).resolve().parents[1] / "experiments/logs/density_sweep"
 OUT = LOGDIR / "results.csv"
 FN = re.compile(r"(?P<cfg>[a-z]+)_N(?P<N>\d+)_ss(?P<ss>\d+)\.log$")
 OURS = re.compile(r"OURS \(GraPhyNet\)\s+MAE=([0-9.]+)(?:±([0-9.]+))?")

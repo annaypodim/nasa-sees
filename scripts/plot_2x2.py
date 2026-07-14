@@ -45,6 +45,6 @@ ax.annotate("terrain on HYBRID:\nvariance halved (robustness win)",
             xy=(3, 4.863+0.599), xytext=(3, 7.2), fontsize=8.5, color="#1a6",
             ha="center", arrowprops=dict(arrowstyle="->", color="#1a6", lw=1.2))
 fig.tight_layout()
-out = "faithful_logs/slc_2x2_ablation.png"
+out = "experiments/logs/faithful/slc_2x2_ablation.png"
 fig.savefig(out, dpi=140)
 print("wrote", out)
