@@ -78,6 +78,11 @@ WIND_SOURCE = "era5"  # which wind feeds the convection module (CLI: --wind).
 #           floor for the ablation. Needs --allow-missing-inputs (all-zero wind).
 USE_CACHE = True  # load data/<city>/processed/<group> if present (CLI: --rebuild)
 STRICT_INPUTS = True  # abort if PM2.5 / distance / wind inputs are missing or all-zero
+# Per-node wind SPEED [T, N] (hypot(u10, v10), columns aligned to the final node order),
+# stashed as a side effect of build_static_graph so a per-node wind-speed FEATURE can be
+# built without changing the return signature (which several eval drivers unpack exactly).
+# None until build_static_graph runs; consumers must check has_wind before using it.
+NODE_WIND_SPEED = None
 # DENSITY SWEEP: randomly keep only SUBSAMPLE_N of the surviving sensors (edges rebuild
 # on the subset) to trace MAE(ours) & MAE(IDW) vs network density and find the crossover
 # where the learned correction starts BEATING IDW (sparse regime). None = use all sensors.
@@ -218,6 +223,8 @@ def build_static_graph():
     edge_delev = torch.tensor(elev[dst] - elev[src], dtype=torch.float)
 
     U, V = u10_wide.to_numpy(), v10_wide.to_numpy()  # [T, N]
+    global NODE_WIND_SPEED
+    NODE_WIND_SPEED = np.hypot(U, V)                  # [T, N] per-node wind speed
     u_edge = 0.5 * (U[:, src] + U[:, dst])           # [T, E] mean wind on the edge
     v_edge = 0.5 * (V[:, src] + V[:, dst])
     speed = np.hypot(u_edge, v_edge)                              # [T, E]  = w_v (GraPhy)

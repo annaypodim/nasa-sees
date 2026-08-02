@@ -1,0 +1,13 @@
+FINISHED pgh_zero_g24 (exit 0)
+FINISHED pgh_zero_g48 (exit 0)
+FINISHED fresno_hrrr_g24 (exit 0)
+FINISHED pgh_hrrr_g24 (exit 0)
+FINISHED pgh_hrrr_g48 (exit 0)
+FINISHED fresno_hrrr_g48 (exit 0)
+FINISHED fresno_zero_g24 (exit 0)
+FINISHED fresno_zero_g48 (exit 0)
+FINISHED slc_hrrr_g24 (exit 0)
+FINISHED slc_zero_g24 (exit 0)
+FINISHED slc_hrrr_g48 (exit 0)
+FINISHED slc_zero_g48 (exit 0)
+ALL_DONE

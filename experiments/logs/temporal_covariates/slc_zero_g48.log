@@ -1,0 +1,9 @@
+[preprocess] masked 4379/87320 implausible cells (5.01%) outside [0, 500] ug/m3 -> treated as not observed
+[preprocess] sensors: 40 -> 36 kept  (threshold=40% yearly coverage)
+[preprocess] dropped full-year duds (coverage): [('112594', 0.0), ('129727', 0.0), ('34941', 0.081), ('199645', 0.209)]
+[preprocess] observed cells: 76530/78588 (97.4%) -> only these can enter the loss; the rest are filled inputs (zero), never targets
+[wind] source=zero -> convection inert (distance only)
+[graph] set='urban'  nodes=36  edges=228  timesteps=2183  has_wind=False  has_temp=False
+[warn] STRICT_INPUTS off: wind is missing -> zero-filled (convection runs on distance only)
+[cov] city=slc wind=zero gap=48 N=36 folds=5 ids_hash=3340720161
+RESULT: {"city": "slc", "gap_len": 48, "variant": "base_wind_zero", "ours_mae": 7.3892, "ours_std": 1.3775, "stk_mae": 7.5404, "baseline_ours_mae": 7.3892, "delta_vs_baseline_pct": 0.0, "folds_improved_over_baseline": "n/a", "ours_per_fold": [7.586, 5.1588, 9.4685, 7.0925, 7.6403]}

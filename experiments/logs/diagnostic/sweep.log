@@ -1,0 +1,146 @@
+[preprocess] masked 6759/576576 implausible cells (1.17%) outside [0, 500] ug/m3 -> treated as not observed
+[preprocess] sensors: 66 -> 59 kept  (threshold=40% yearly coverage)
+[preprocess] dropped full-year duds (coverage): [('198947', 0.0), ('201107', 0.032), ('200813', 0.032), ('103796', 0.136), ('185379', 0.183), ('141976', 0.237), ('141112', 0.243)]
+[preprocess] observed cells: 423923/515424 (82.2%) -> only these can enter the loss; the rest are filled inputs (zero), never targets
+[wind] source=HRRR 3km (/Users/annaypodimatopoulou/Code/side_quests/nasa-sees/data/pittsburgh/wind_hrrr)
+[subsample] density sweep -> kept 12 sensors (subsample_seed=0)
+[graph] set='urban'  nodes=12  edges=74  timesteps=8736  has_wind=True  has_temp=True
+[done] pittsburgh  N=12 ss=0  nrmse=0.945  margin=+10.44%  won=5/5
+[preprocess] masked 6759/576576 implausible cells (1.17%) outside [0, 500] ug/m3 -> treated as not observed
+[preprocess] sensors: 66 -> 59 kept  (threshold=40% yearly coverage)
+[preprocess] dropped full-year duds (coverage): [('198947', 0.0), ('201107', 0.032), ('200813', 0.032), ('103796', 0.136), ('185379', 0.183), ('141976', 0.237), ('141112', 0.243)]
+[preprocess] observed cells: 423923/515424 (82.2%) -> only these can enter the loss; the rest are filled inputs (zero), never targets
+[wind] source=HRRR 3km (/Users/annaypodimatopoulou/Code/side_quests/nasa-sees/data/pittsburgh/wind_hrrr)
+[subsample] density sweep -> kept 12 sensors (subsample_seed=1)
+[graph] set='urban'  nodes=12  edges=84  timesteps=8736  has_wind=True  has_temp=True
+[done] pittsburgh  N=12 ss=1  nrmse=0.907  margin=+10.90%  won=5/5
+[preprocess] masked 6759/576576 implausible cells (1.17%) outside [0, 500] ug/m3 -> treated as not observed
+[preprocess] sensors: 66 -> 59 kept  (threshold=40% yearly coverage)
+[preprocess] dropped full-year duds (coverage): [('198947', 0.0), ('201107', 0.032), ('200813', 0.032), ('103796', 0.136), ('185379', 0.183), ('141976', 0.237), ('141112', 0.243)]
+[preprocess] observed cells: 423923/515424 (82.2%) -> only these can enter the loss; the rest are filled inputs (zero), never targets
+[wind] source=HRRR 3km (/Users/annaypodimatopoulou/Code/side_quests/nasa-sees/data/pittsburgh/wind_hrrr)
+[subsample] density sweep -> kept 20 sensors (subsample_seed=0)
+[graph] set='urban'  nodes=20  edges=142  timesteps=8736  has_wind=True  has_temp=True
+[done] pittsburgh  N=20 ss=0  nrmse=0.917  margin=+6.46%  won=5/5
+[preprocess] masked 6759/576576 implausible cells (1.17%) outside [0, 500] ug/m3 -> treated as not observed
+[preprocess] sensors: 66 -> 59 kept  (threshold=40% yearly coverage)
+[preprocess] dropped full-year duds (coverage): [('198947', 0.0), ('201107', 0.032), ('200813', 0.032), ('103796', 0.136), ('185379', 0.183), ('141976', 0.237), ('141112', 0.243)]
+[preprocess] observed cells: 423923/515424 (82.2%) -> only these can enter the loss; the rest are filled inputs (zero), never targets
+[wind] source=HRRR 3km (/Users/annaypodimatopoulou/Code/side_quests/nasa-sees/data/pittsburgh/wind_hrrr)
+[subsample] density sweep -> kept 20 sensors (subsample_seed=1)
+[graph] set='urban'  nodes=20  edges=132  timesteps=8736  has_wind=True  has_temp=True
+[done] pittsburgh  N=20 ss=1  nrmse=0.919  margin=+11.49%  won=5/5
+[preprocess] masked 6759/576576 implausible cells (1.17%) outside [0, 500] ug/m3 -> treated as not observed
+[preprocess] sensors: 66 -> 59 kept  (threshold=40% yearly coverage)
+[preprocess] dropped full-year duds (coverage): [('198947', 0.0), ('201107', 0.032), ('200813', 0.032), ('103796', 0.136), ('185379', 0.183), ('141976', 0.237), ('141112', 0.243)]
+[preprocess] observed cells: 423923/515424 (82.2%) -> only these can enter the loss; the rest are filled inputs (zero), never targets
+[wind] source=HRRR 3km (/Users/annaypodimatopoulou/Code/side_quests/nasa-sees/data/pittsburgh/wind_hrrr)
+[subsample] density sweep -> kept 30 sensors (subsample_seed=0)
+[graph] set='urban'  nodes=30  edges=206  timesteps=8736  has_wind=True  has_temp=True
+[done] pittsburgh  N=30 ss=0  nrmse=0.936  margin=+9.82%  won=5/5
+[preprocess] masked 6759/576576 implausible cells (1.17%) outside [0, 500] ug/m3 -> treated as not observed
+[preprocess] sensors: 66 -> 59 kept  (threshold=40% yearly coverage)
+[preprocess] dropped full-year duds (coverage): [('198947', 0.0), ('201107', 0.032), ('200813', 0.032), ('103796', 0.136), ('185379', 0.183), ('141976', 0.237), ('141112', 0.243)]
+[preprocess] observed cells: 423923/515424 (82.2%) -> only these can enter the loss; the rest are filled inputs (zero), never targets
+[wind] source=HRRR 3km (/Users/annaypodimatopoulou/Code/side_quests/nasa-sees/data/pittsburgh/wind_hrrr)
+[subsample] density sweep -> kept 30 sensors (subsample_seed=1)
+[graph] set='urban'  nodes=30  edges=200  timesteps=8736  has_wind=True  has_temp=True
+[done] pittsburgh  N=30 ss=1  nrmse=0.919  margin=+10.92%  won=5/5
+[preprocess] masked 6759/576576 implausible cells (1.17%) outside [0, 500] ug/m3 -> treated as not observed
+[preprocess] sensors: 66 -> 59 kept  (threshold=40% yearly coverage)
+[preprocess] dropped full-year duds (coverage): [('198947', 0.0), ('201107', 0.032), ('200813', 0.032), ('103796', 0.136), ('185379', 0.183), ('141976', 0.237), ('141112', 0.243)]
+[preprocess] observed cells: 423923/515424 (82.2%) -> only these can enter the loss; the rest are filled inputs (zero), never targets
+[wind] source=HRRR 3km (/Users/annaypodimatopoulou/Code/side_quests/nasa-sees/data/pittsburgh/wind_hrrr)
+[subsample] density sweep -> kept 45 sensors (subsample_seed=0)
+[graph] set='urban'  nodes=45  edges=302  timesteps=8736  has_wind=True  has_temp=True
+[done] pittsburgh  N=45 ss=0  nrmse=0.874  margin=+9.34%  won=5/5
+[preprocess] masked 6759/576576 implausible cells (1.17%) outside [0, 500] ug/m3 -> treated as not observed
+[preprocess] sensors: 66 -> 59 kept  (threshold=40% yearly coverage)
+[preprocess] dropped full-year duds (coverage): [('198947', 0.0), ('201107', 0.032), ('200813', 0.032), ('103796', 0.136), ('185379', 0.183), ('141976', 0.237), ('141112', 0.243)]
+[preprocess] observed cells: 423923/515424 (82.2%) -> only these can enter the loss; the rest are filled inputs (zero), never targets
+[wind] source=HRRR 3km (/Users/annaypodimatopoulou/Code/side_quests/nasa-sees/data/pittsburgh/wind_hrrr)
+[subsample] density sweep -> kept 45 sensors (subsample_seed=1)
+[graph] set='urban'  nodes=45  edges=296  timesteps=8736  has_wind=True  has_temp=True
+[done] pittsburgh  N=45 ss=1  nrmse=0.882  margin=+10.62%  won=5/5
+[preprocess] masked 4379/87320 implausible cells (5.01%) outside [0, 500] ug/m3 -> treated as not observed
+[preprocess] sensors: 40 -> 36 kept  (threshold=40% yearly coverage)
+[preprocess] dropped full-year duds (coverage): [('112594', 0.0), ('129727', 0.0), ('34941', 0.081), ('199645', 0.209)]
+[preprocess] observed cells: 76530/78588 (97.4%) -> only these can enter the loss; the rest are filled inputs (zero), never targets
+[wind] source=HRRR 3km (/Users/annaypodimatopoulou/Code/side_quests/nasa-sees/data/slc/wind_hrrr)
+[subsample] density sweep -> kept 10 sensors (subsample_seed=0)
+[graph] set='urban'  nodes=10  edges=56  timesteps=2183  has_wind=True  has_temp=False
+[done] slc         N=10 ss=0  nrmse=0.816  margin=+4.62%  won=5/5
+[preprocess] masked 4379/87320 implausible cells (5.01%) outside [0, 500] ug/m3 -> treated as not observed
+[preprocess] sensors: 40 -> 36 kept  (threshold=40% yearly coverage)
+[preprocess] dropped full-year duds (coverage): [('112594', 0.0), ('129727', 0.0), ('34941', 0.081), ('199645', 0.209)]
+[preprocess] observed cells: 76530/78588 (97.4%) -> only these can enter the loss; the rest are filled inputs (zero), never targets
+[wind] source=HRRR 3km (/Users/annaypodimatopoulou/Code/side_quests/nasa-sees/data/slc/wind_hrrr)
+[subsample] density sweep -> kept 10 sensors (subsample_seed=1)
+[graph] set='urban'  nodes=10  edges=64  timesteps=2183  has_wind=True  has_temp=False
+[done] slc         N=10 ss=1  nrmse=0.806  margin=+6.09%  won=5/5
+[preprocess] masked 4379/87320 implausible cells (5.01%) outside [0, 500] ug/m3 -> treated as not observed
+[preprocess] sensors: 40 -> 36 kept  (threshold=40% yearly coverage)
+[preprocess] dropped full-year duds (coverage): [('112594', 0.0), ('129727', 0.0), ('34941', 0.081), ('199645', 0.209)]
+[preprocess] observed cells: 76530/78588 (97.4%) -> only these can enter the loss; the rest are filled inputs (zero), never targets
+[wind] source=HRRR 3km (/Users/annaypodimatopoulou/Code/side_quests/nasa-sees/data/slc/wind_hrrr)
+[subsample] density sweep -> kept 16 sensors (subsample_seed=0)
+[graph] set='urban'  nodes=16  edges=98  timesteps=2183  has_wind=True  has_temp=False
+[done] slc         N=16 ss=0  nrmse=0.679  margin=+3.53%  won=4/5
+[preprocess] masked 4379/87320 implausible cells (5.01%) outside [0, 500] ug/m3 -> treated as not observed
+[preprocess] sensors: 40 -> 36 kept  (threshold=40% yearly coverage)
+[preprocess] dropped full-year duds (coverage): [('112594', 0.0), ('129727', 0.0), ('34941', 0.081), ('199645', 0.209)]
+[preprocess] observed cells: 76530/78588 (97.4%) -> only these can enter the loss; the rest are filled inputs (zero), never targets
+[wind] source=HRRR 3km (/Users/annaypodimatopoulou/Code/side_quests/nasa-sees/data/slc/wind_hrrr)
+[subsample] density sweep -> kept 16 sensors (subsample_seed=1)
+[graph] set='urban'  nodes=16  edges=104  timesteps=2183  has_wind=True  has_temp=False
+[done] slc         N=16 ss=1  nrmse=0.676  margin=+5.47%  won=5/5
+[preprocess] masked 4379/87320 implausible cells (5.01%) outside [0, 500] ug/m3 -> treated as not observed
+[preprocess] sensors: 40 -> 36 kept  (threshold=40% yearly coverage)
+[preprocess] dropped full-year duds (coverage): [('112594', 0.0), ('129727', 0.0), ('34941', 0.081), ('199645', 0.209)]
+[preprocess] observed cells: 76530/78588 (97.4%) -> only these can enter the loss; the rest are filled inputs (zero), never targets
+[wind] source=HRRR 3km (/Users/annaypodimatopoulou/Code/side_quests/nasa-sees/data/slc/wind_hrrr)
+[subsample] density sweep -> kept 24 sensors (subsample_seed=0)
+[graph] set='urban'  nodes=24  edges=156  timesteps=2183  has_wind=True  has_temp=False
+[done] slc         N=24 ss=0  nrmse=0.637  margin=+3.45%  won=5/5
+[preprocess] masked 4379/87320 implausible cells (5.01%) outside [0, 500] ug/m3 -> treated as not observed
+[preprocess] sensors: 40 -> 36 kept  (threshold=40% yearly coverage)
+[preprocess] dropped full-year duds (coverage): [('112594', 0.0), ('129727', 0.0), ('34941', 0.081), ('199645', 0.209)]
+[preprocess] observed cells: 76530/78588 (97.4%) -> only these can enter the loss; the rest are filled inputs (zero), never targets
+[wind] source=HRRR 3km (/Users/annaypodimatopoulou/Code/side_quests/nasa-sees/data/slc/wind_hrrr)
+[subsample] density sweep -> kept 24 sensors (subsample_seed=1)
+[graph] set='urban'  nodes=24  edges=144  timesteps=2183  has_wind=True  has_temp=False
+[done] slc         N=24 ss=1  nrmse=0.642  margin=+3.88%  won=5/5
+[preprocess] masked 7430/61971 implausible cells (11.99%) outside [0, 500] ug/m3 -> treated as not observed
+[preprocess] sensors: 21 -> 18 kept  (threshold=40% yearly coverage)
+[preprocess] dropped full-year duds (coverage): [('111391', 0.0), ('118085', 0.0), ('18625', 0.0)]
+[preprocess] observed cells: 49026/53118 (92.3%) -> only these can enter the loss; the rest are filled inputs (zero), never targets
+[wind] source=HRRR 3km (/Users/annaypodimatopoulou/Code/side_quests/nasa-sees/data/fresno_variants/fresno/wind_hrrr)
+[subsample] density sweep -> kept 8 sensors (subsample_seed=0)
+[graph] set='urban'  nodes=8  edges=48  timesteps=2951  has_wind=True  has_temp=False
+[done] fresno      N= 8 ss=0  nrmse=0.966  margin=+8.84%  won=5/5
+[preprocess] masked 7430/61971 implausible cells (11.99%) outside [0, 500] ug/m3 -> treated as not observed
+[preprocess] sensors: 21 -> 18 kept  (threshold=40% yearly coverage)
+[preprocess] dropped full-year duds (coverage): [('111391', 0.0), ('118085', 0.0), ('18625', 0.0)]
+[preprocess] observed cells: 49026/53118 (92.3%) -> only these can enter the loss; the rest are filled inputs (zero), never targets
+[wind] source=HRRR 3km (/Users/annaypodimatopoulou/Code/side_quests/nasa-sees/data/fresno_variants/fresno/wind_hrrr)
+[subsample] density sweep -> kept 8 sensors (subsample_seed=1)
+[graph] set='urban'  nodes=8  edges=48  timesteps=2951  has_wind=True  has_temp=False
+[done] fresno      N= 8 ss=1  nrmse=1.024  margin=+3.83%  won=5/5
+[preprocess] masked 7430/61971 implausible cells (11.99%) outside [0, 500] ug/m3 -> treated as not observed
+[preprocess] sensors: 21 -> 18 kept  (threshold=40% yearly coverage)
+[preprocess] dropped full-year duds (coverage): [('111391', 0.0), ('118085', 0.0), ('18625', 0.0)]
+[preprocess] observed cells: 49026/53118 (92.3%) -> only these can enter the loss; the rest are filled inputs (zero), never targets
+[wind] source=HRRR 3km (/Users/annaypodimatopoulou/Code/side_quests/nasa-sees/data/fresno_variants/fresno/wind_hrrr)
+[subsample] density sweep -> kept 12 sensors (subsample_seed=0)
+[graph] set='urban'  nodes=12  edges=80  timesteps=2951  has_wind=True  has_temp=False
+[done] fresno      N=12 ss=0  nrmse=0.763  margin=+3.54%  won=5/5
+[preprocess] masked 7430/61971 implausible cells (11.99%) outside [0, 500] ug/m3 -> treated as not observed
+[preprocess] sensors: 21 -> 18 kept  (threshold=40% yearly coverage)
+[preprocess] dropped full-year duds (coverage): [('111391', 0.0), ('118085', 0.0), ('18625', 0.0)]
+[preprocess] observed cells: 49026/53118 (92.3%) -> only these can enter the loss; the rest are filled inputs (zero), never targets
+[wind] source=HRRR 3km (/Users/annaypodimatopoulou/Code/side_quests/nasa-sees/data/fresno_variants/fresno/wind_hrrr)
+[subsample] density sweep -> kept 12 sensors (subsample_seed=1)
+[graph] set='urban'  nodes=12  edges=78  timesteps=2951  has_wind=True  has_temp=False
+[done] fresno      N=12 ss=1  nrmse=0.792  margin=+8.72%  won=5/5
+
+[complete] -> experiments/logs/diagnostic/density_points.csv

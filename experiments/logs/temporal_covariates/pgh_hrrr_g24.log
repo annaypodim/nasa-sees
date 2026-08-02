@@ -1,0 +1,15 @@
+[preprocess] masked 6759/576576 implausible cells (1.17%) outside [0, 500] ug/m3 -> treated as not observed
+[preprocess] sensors: 66 -> 59 kept  (threshold=40% yearly coverage)
+[preprocess] dropped full-year duds (coverage): [('198947', 0.0), ('201107', 0.032), ('200813', 0.032), ('103796', 0.136), ('185379', 0.183), ('141976', 0.237), ('141112', 0.243)]
+[preprocess] observed cells: 423923/515424 (82.2%) -> only these can enter the loss; the rest are filled inputs (zero), never targets
+[wind] source=HRRR 3km (/Users/annaypodimatopoulou/Code/side_quests/nasa-sees/.claude/worktrees/agent-ac26f922cb5129545/data/pittsburgh/wind_hrrr)
+[graph] set='urban'  nodes=59  edges=394  timesteps=8736  has_wind=True  has_temp=True
+[cov] city=pittsburgh wind=hrrr gap=24 N=59 folds=5 ids_hash=1492093042
+RESULT: {"city": "pittsburgh", "gap_len": 24, "variant": "base_wind_hrrr", "ours_mae": 3.8921, "ours_std": 0.0944, "stk_mae": 4.3216, "baseline_ours_mae": 3.8921, "delta_vs_baseline_pct": 0.0, "folds_improved_over_baseline": "n/a", "ours_per_fold": [3.9103, 3.9313, 3.7449, 3.8447, 4.0293]}
+RESULT: {"city": "pittsburgh", "gap_len": 24, "variant": "temp", "ours_mae": 3.8928, "ours_std": 0.0935, "stk_mae": 4.3215, "baseline_ours_mae": 3.8921, "delta_vs_baseline_pct": 0.019, "folds_improved_over_baseline": 2, "ours_per_fold": [3.8965, 3.9405, 3.7654, 3.8255, 4.0364]}
+[aod] aod_points_2023-01-01_2023-12-31.csv: 173 days, 59/59 sensors with data, 69% of day-cells have a retrieval
+[aod] aod_points_2023-01-01_2023-12-31.csv: 173 days, 59/59 sensors with data, 69% of day-cells have a retrieval
+[aod] aod_points_2023-01-01_2023-12-31.csv: 173 days, 59/59 sensors with data, 69% of day-cells have a retrieval
+[aod] aod_points_2023-01-01_2023-12-31.csv: 173 days, 59/59 sensors with data, 69% of day-cells have a retrieval
+[aod] aod_points_2023-01-01_2023-12-31.csv: 173 days, 59/59 sensors with data, 69% of day-cells have a retrieval
+RESULT: {"city": "pittsburgh", "gap_len": 24, "variant": "aod", "ours_mae": 3.9315, "ours_std": 0.0932, "stk_mae": 4.3214, "baseline_ours_mae": 3.8921, "delta_vs_baseline_pct": 1.012, "folds_improved_over_baseline": 0, "ours_per_fold": [3.915, 3.9881, 3.7903, 3.8957, 4.0684]}

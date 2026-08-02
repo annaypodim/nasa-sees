@@ -1748,3 +1748,203 @@ STATUS: K-fold was the last rigor gap (flagged repeatedly). Now closed. Headline
 is publication-clean: a physics-GNN with terrain-mean prior + temporal memory
 beats a strong spatiotemporal-kriging baseline by 2-10% across 3 cities x 2 gap
 lengths, winning every one of 30 CV folds.
+
+================================================================================
+2026-07-13 (K) -- DEPLOY-OR-NOT DIAGNOSTIC (the a-priori decision rule / novelty)
+================================================================================
+BUILT: scripts/diagnostic.py. Computes LABEL-FREE statistics of each city's
+OBSERVED network (no training, no held-out labels) and regresses the realized
+5-fold-CV margin (OURS vs ST-kriging, section I) on each. Goal: an a-priori number
++ threshold telling a practitioner whether the GNN correction is worth training,
+BEFORE training it -- the quantitative version of the IGNNK "richer field -> GNN
+wins more" claim, which the literature only states qualitatively.
+
+RESULT (6 city x gap cells; positive = GNN beats strong ST-kriging baseline):
+  predictor       R2     Spearman   deploy-when      note
+  spatial_nrmse   0.902   0.829      > 0.523          LOO-IDW error / field std
+  mean_nn_km      0.900  -1.000      < 3.74 km        sensor spacing (density)
+  density         0.689   0.829      > 0.28 nodes/km2
+  vario_h         0.614  -0.886      (gap axis)       temporal drift over horizon
+  rho_h/richness  ~0      weak
+BEST a-priori predictor = spatial_nrmse (leave-one-out IDW error normalised by
+field std = "spatial interpolation headroom"): improvement% ~= 27.7*nrmse - 14.5,
+crossover nrmse ~ 0.52. Pgh 0.862 -> +8-10%, Fresno 0.739 -> +6-7%, SLC 0.628 ->
++2-3%. Monotone, clean. Mechanism: the GNN earns its keep in proportion to how much
+of the field plain spatial interpolation CANNOT explain (headroom), not density per
+se. The small within-city 24h->48h drop is carried by temporal drift (vario_h).
+
+HONEST LIMITATION: only 3 distinct networks (cities) -> the strong predictors are
+city-level; R2~0.9 across 6 points is inflated by within-city ties (n_effective~3).
+This is SUGGESTIVE, not yet a law. To make it a defensible contribution it needs
+more network points: subsample each city to ~5 densities x 3 cities = ~15 networks,
+recompute (spatial_nrmse, margin) per sub-network. NEXT.
+NOVELTY VERDICT: the diagnostic (a-priori label-free predictor + numeric deploy
+threshold for air-quality GNN imputation) is genuinely not in the literature; the
+current n=3 evidence is preliminary. Method novel, evidence needs densifying.
+
+--------------------------------------------------------------------------------
+(K2) DENSIFIED DIAGNOSTIC -- the honesty check that DEFLATED the clean fit
+--------------------------------------------------------------------------------
+BUILT scripts/run_temporal_density.py (+ eval_temporal --max-nodes/--subsample-seed):
+subsample each city to several densities x 2 seeds -> 18 DISTINCT networks, each with
+its own a-priori spatial_nrmse and realized 5-fold margin (gap 24h, winning config).
+experiments/logs/diagnostic/density_points.csv.
+
+RESULT (spatial_nrmse -> margin%, refit as points accumulated):
+    6 city-cells   : R2=0.90  crossover nrmse~0.52   <- OVER-OPTIMISTIC (n_eff~3)
+    12 networks    : R2=0.65  crossover~0.52
+    18 networks    : R2=0.385 Spearman 0.59 crossover~0.38   <- HONEST NUMBER
+The clean R2=0.90 was an ARTIFACT of only 3 city-level points. At the true network
+level spatial_nrmse is a REAL but NOISY predictor: it orders the sparse-terrain SLC
+regime (nrmse 0.64-0.82, margin 3.5-6%) below the flatter/denser Pgh+Fresno (nrmse
+0.76-1.02, margin 3.5-11%), but does NOT finely separate Pgh from Fresno, and Fresno
+subsamples scatter hard (same nrmse -> margin 3.5 vs 8.7). Part of the scatter is
+y-noise: small subsamples (esp. SLC winter-inversion, ours_mae up to 8.3) have high
+fold variance.
+HONEST VERDICT: the DIRECTION holds (positive slope, all 18/18 nets still beat
+ST-kriging, city ordering correct) but the DEPLOY THRESHOLD is loosely constrained
+(0.38-0.52 depending on sample) and per-network R2~0.4. So: a genuine trend + an
+a-priori predictor, NOT a precise law. Also every tested net sits ABOVE the fitted
+crossover and WINS -> we have not yet OBSERVED a temporal-task network that loses,
+so the threshold is an extrapolation. To harden it we'd need a genuinely smoother/
+denser net (low headroom) that actually crosses zero. Densifying was the right call:
+it stopped us putting an inflated R2=0.90 on the poster.
+
+================================================================================
+2026-07-14 (J) TEMPORAL COVARIATE TEST -- temp / AOD / wind
+================================================================================
+QUESTION. Time-varying covariates (temperature, AOD, wind) were shown DEAD on the
+memoryless SPATIAL task (§ earlier): their variance is common-mode across a metro at
+a single hour (spatial std ~1% of temporal std). HYPOTHESIS: on the TEMPORAL gap-fill
+task -- where a sensor is dark 24-48h and its own carry-forward persistence goes stale
+-- a covariate that varies in TIME could carry signal the persistence+kriging prior
+misses. Tested rigorously, paired, on top of §I's strongest model.
+
+BASELINE (the model to add to) = --temporal --rk-spatial --wind hrrr under 5-fold CV:
+    prior = b*persistence + (1-b)*RK-elev(elevation-drift kriging);  pred = prior + GNN.
+    Prior-only prediction = the ST-kriging baseline (honest space+time floor).
+
+DATA-AVAILABILITY LIMIT (verified in build_graph2 CITY_CONFIG, NOT assumed):
+    - TEMPERATURE (--temp-gate) and AOD (--aod-feature): ONLY pittsburgh has temp_dir/
+      temp_zip + aod_csv. slc and fresno have NEITHER. So temp/AOD verdicts rest on
+      1 city x 2 gaps. (build_static_graph: has_temp True only for pittsburgh; AOD via
+      bg.load_aod -> 59/59 sensors, 33% of cells have a retrieval, rest gap-filled.)
+    - WIND: HRRR wind exists for all 3 cities -> wind tested on all 3 (hrrr vs zero).
+
+COMMANDS (all --sensor-set urban --wind hrrr --temporal --rk-spatial --kfold 5,
+epochs=120, hidden=16, layers=4 -- identical to §I so numbers are comparable):
+    # driver (paired, same folds+seeds; only the covariate flag differs per variant):
+    PYTHONPATH=. .venv/bin/python scripts/run_temporal_covariates.py \
+        --city pittsburgh --wind hrrr --gap-len 24 --kfold 5 --epochs 120 \
+        --variants base,temp,aod                 # + gap-len 48
+    # wind isolation (paired per fold across the two --wind processes; folds depend
+    # only on the observed mask, identical across wind sources):
+    ... --city {pittsburgh,fresno,slc} --wind hrrr  --variants base   # + --wind zero
+    # underlying flag equivalent per fold (what run_temporal_covariates invokes):
+    scripts/eval_temporal.py --city pittsburgh --wind hrrr --temporal --rk-spatial \
+        --kfold 5 --gap-len 24 --temp-gate   (and --aod-feature)
+Full matrix: scripts/run_temporal_cov_matrix.sh -> experiments/logs/temporal_covariates/*.log
+Aggregated : scripts/aggregate_temporal_cov.py -> experiments/logs/temporal_covariates/results.csv
+
+BASELINE REPRODUCES §I EXACTLY (sanity):
+    pgh   g24 3.892 / g48 4.276   (§I 3.89 / 4.28)   fresno g24 4.163 / g48 4.751 (§I 4.16 / 4.75)
+    slc   g24 5.937 / g48 7.407   (§I 5.94 / 7.41)   -> deterministic K-fold, confirmed.
+
+RESULTS (5-fold CV; delta = OURS-with-covariate vs OURS-baseline, PAIRED; folds+ =
+folds (of 5) where the covariate LOWERED OURS MAE. For wind, "covariate" = HRRR wind
+present, baseline = --wind zero; delta<0 => wind helps):
+
+  covariate  city        gap  OURS_base  OURS_cov   ST-krig  delta      folds+/5  verdict
+  --------------------------------------------------------------------------------------
+  TEMP       pittsburgh  24h  3.892      3.893      4.322    +0.02%     2/5       null
+  TEMP       pittsburgh  48h  4.276      4.296      4.658    +0.47%     2/5       null / slight hurt
+  AOD        pittsburgh  24h  3.892      3.932      4.321    +1.01%     0/5       HURTS
+  AOD        pittsburgh  48h  4.276      4.304      4.658    +0.65%     2/5       null / hurt
+  WIND       pittsburgh  24h  3.919(z)   3.892(h)   4.322    -0.69%     4/5       tiny help
+  WIND       pittsburgh  48h  4.324(z)   4.276(h)   4.658    -1.10%     3/5       tiny help
+  WIND       fresno      24h  4.155(z)   4.163(h)   4.486    +0.20%     2/5       wash (neg)
+  WIND       fresno      48h  4.754(z)   4.751(h)   5.062    -0.07%     2/5       wash
+  WIND       slc         24h  5.929(z)   5.937(h)   6.137    +0.14%     1/5       wash (neg)
+  WIND       slc         48h  7.389(z)   7.407(h)   7.541    +0.23%     1/5       wash (neg)
+  (z)=--wind zero, (h)=--wind hrrr. OURS beats ST-kriging in every cell regardless of
+  covariate -- the covariates move OURS by <=1%, i.e. inside the §I win, never creating it.
+
+HONEST VERDICTS
+  TEMPERATURE (--temp-gate, pittsburgh only): NULL. +0.02% at 24h (learned gate leaves
+    the prediction essentially unchanged), +0.47% at 48h (slight hurt); <=2/5 folds ever
+    improve. The per-node temperature gate adds nothing the persistence+lag features and
+    RK-elev prior don't already encode. 1 city x 2 gaps (only city with temp data).
+  AOD (--aod-feature, pittsburgh only): NULL-to-HURTS. +1.01% at 24h with 0/5 folds
+    improved (unambiguous small hurt), +0.65% at 48h. The satellite AOD node feature is
+    only 33% populated (gap-filled to 0 elsewhere) and is redundant with the target's own
+    PM history; adding it injects noise. 1 city x 2 gaps.
+  WIND (hrrr vs zero, all 3 cities): NULL / NOT THE LEVER. A tiny consistent help ONLY on
+    pittsburgh (-0.7pp / -1.1pp, 4/5 & 3/5 folds), and a WASH-to-marginally-negative on
+    fresno (+0.20 / -0.07pp) and slc (+0.14 / +0.23pp, only 1/5 folds helped). Sub-1%
+    everywhere and the wrong sign on the two terrain/sparse cities. This CONFIRMS the §H2
+    "wind is not the lever" finding now under proper K-fold, on 3 cities: advection is not
+    what earns the GNN its win; the terrain-mean (RK-elev) prior + temporal memory are.
+    (Only the GNN correction sees wind; prior/baseline don't -- so this is wind's full
+    ceiling on the task.)
+
+OVERALL. The covariate-NULL story extends cleanly from the SPATIAL task to the TEMPORAL
+task. On BOTH regimes temp / AOD / wind are redundant: a held-out sensor's OWN persistence
++ lag24/lag168 history already carries whatever temporal signal these covariates provide,
+so bolting them on moves MAE by <=1% and usually the wrong way. The project's win is NOT
+covariate fusion -- it is (terrain-mean RK-elev prior) + (temporal memory) + (GNN nonlinear
+correction), exactly §H/§I. This is the honest negative result that keeps the baselines clean:
+we tested the covariates on the one task where they COULD have paid off, and they did not.
+
+CODE ADDED THIS SESSION (all leak-free, optional, default-off; the §I path is byte-identical
+when the new flags are absent):
+  - src/model/train.py: NODE_WIND_SPEED global = per-node hypot(u10,v10) [T,N], stashed as a
+    side effect of build_static_graph (no return-signature change -> the 5 eval drivers that
+    unpack the 13-tuple are untouched).
+  - scripts/eval_temporal.py: --wind-feature = per-node standardized wind-SPEED node feature,
+    mirroring --aod-feature (guards on has_wind; errors on --wind zero). Phase-2 (running the
+    per-node wind feature) was SKIPPED by decision: the wind on/off isolation above already
+    answers whether wind carries usable signal (it does not). Flag is built + smoke-tested
+    (fresno, runs clean, node_in increments) so it's ready if ever wanted.
+  - scripts/run_temporal_covariates.py: paired covariate driver (same folds+seeds, one process
+    per city/gap; emits RESULT: json per variant incl. per-fold arrays).
+  - scripts/run_temporal_cov_matrix.sh (Phase-1 matrix), run_temporal_cov_matrix_p2.sh (Phase-2,
+    unused), scripts/aggregate_temporal_cov.py (RESULT: -> results.csv incl. derived wind rows).
+
+--------------------------------------------------------------------------------
+(K3) DIAGNOSTIC v2 -- density predictor + OBSERVED CROSSOVER + 2-axis rule
+--------------------------------------------------------------------------------
+Two fixes to the weak v1 diagnostic (K2, R2=0.385, no observed crossover):
+
+1. BETTER SPATIAL PREDICTOR (scripts/enrich_diagnostic.py, no training, 18 nets):
+   density (nodes/km2)  R2=0.673 Spearman 0.796   <- vs spatial_nrmse R2=0.385
+   spatial_nrmse+density (2-feat) R2=0.707. Density is the stable predictor; nrmse
+   scattered on Fresno. Matches IGNNK intuition (denser graph -> GNN earns more).
+
+2. RANGE EXPANSION ALONG GAP AXIS (scripts/run_gap_sweep.py): winning config, full
+   3 cities x gap {6,12,24,48,72}h, 5-fold. gap_points.csv. FINDINGS:
+   - INVERTED-U in gap on dense Pgh (6h 6.5 -> 24h 9.9 -> 72h 6.8): the GNN's edge
+     over ST-kriging PEAKS at an intermediate gap. Short gap -> persistence near-
+     perfect -> ST-kriging optimal -> little room. Long gap -> all stale -> spatial
+     dominates for both -> edge shrinks. Fresno monotone-declining over 6-72h; SLC
+     humped. Peak location is CITY-DEPENDENT (not a universal law).
+   - *** OBSERVED CROSSOVER (the missing piece) ***: SLC gap=6h margin = -2.97%,
+     0/5 folds -> the GNN LOSES. First regime where the learned model is NOT worth
+     it, landing exactly where the rule predicts: lowest spatial headroom (sparsest
+     city) x lowest temporal staleness (shortest gap). Converts the deploy threshold
+     from EXTRAPOLATION (K2) to a bracketed, OBSERVED boundary.
+
+2-AXIS FIT (15 gap-points, margin range -3.0..+9.9):
+   headroom only            R2=0.662
+   staleness only           R2=0.051   (hump, not linear)
+   headroom + staleness^2   R2=0.747   <- interpretable deploy rule
+   + interaction            R2=0.771
+RULE: deploy the GNN when spatial headroom is high OR gap is in the mid range;
+SKIP it when headroom is low AND gap is short (persistence already near-optimal).
+
+NOVELTY (honest, updated): the observed crossover elevates this from a thin
+"suggestive trend" to a real characterization with a VALIDATED boundary. But it is
+still an INSTANCE of algorithm selection (Rice 1976) / interpolation-vs-density
+crossover applied to PM2.5 graph imputation -- an applied/benchmark contribution,
+not a new method or concept. Defensibly ours: (a) strong honest baseline (ST-krig
+w/ terrain+memory, not IDW), (b) the 2-axis deploy rule, (c) the observed loss
+regime, (d) the gap inverted-U. Poster-solid; workshop-tier as a paper.

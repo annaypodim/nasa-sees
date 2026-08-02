@@ -1,0 +1,8 @@
+[preprocess] masked 4379/87320 implausible cells (5.01%) outside [0, 500] ug/m3 -> treated as not observed
+[preprocess] sensors: 40 -> 36 kept  (threshold=40% yearly coverage)
+[preprocess] dropped full-year duds (coverage): [('112594', 0.0), ('129727', 0.0), ('34941', 0.081), ('199645', 0.209)]
+[preprocess] observed cells: 76530/78588 (97.4%) -> only these can enter the loss; the rest are filled inputs (zero), never targets
+[wind] source=HRRR 3km (/Users/annaypodimatopoulou/Code/side_quests/nasa-sees/.claude/worktrees/agent-ac26f922cb5129545/data/slc/wind_hrrr)
+[graph] set='urban'  nodes=36  edges=228  timesteps=2183  has_wind=True  has_temp=False
+[cov] city=slc wind=hrrr gap=48 N=36 folds=5 ids_hash=3402139525
+RESULT: {"city": "slc", "gap_len": 48, "variant": "base_wind_hrrr", "ours_mae": 7.4065, "ours_std": 1.3646, "stk_mae": 7.5414, "baseline_ours_mae": 7.4065, "delta_vs_baseline_pct": 0.0, "folds_improved_over_baseline": "n/a", "ours_per_fold": [7.5904, 5.1803, 9.4539, 7.1493, 7.6586]}
