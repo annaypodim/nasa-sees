@@ -1,0 +1,35 @@
+[preprocess] masked 6759/576576 implausible cells (1.17%) outside [0, 500] ug/m3 -> treated as not observed
+[preprocess] sensors: 66 -> 59 kept  (threshold=40% yearly coverage)
+[preprocess] dropped full-year duds (coverage): [('198947', 0.0), ('201107', 0.032), ('200813', 0.032), ('103796', 0.136), ('185379', 0.183), ('141976', 0.237), ('141112', 0.243)]
+[preprocess] observed cells: 423923/515424 (82.2%) -> only these can enter the loss; the rest are filled inputs (zero), never targets
+[wind] source=HRRR 3km (/Users/annaypodimatopoulou/Code/side_quests/nasa-sees/data/pittsburgh/wind_hrrr)
+[graph] set='urban'  nodes=59  edges=394  timesteps=8736  has_wind=True  has_temp=True
+[done] pittsburgh  gap= 6h  nrmse=0.862 stale=0.312  margin=+6.54%  won=5/5
+[done] pittsburgh  gap=12h  nrmse=0.862 stale=0.470  margin=+8.47%  won=5/5
+[done] pittsburgh  gap=24h  nrmse=0.862 stale=0.512  margin=+9.94%  won=5/5
+[done] pittsburgh  gap=48h  nrmse=0.862 stale=0.695  margin=+8.19%  won=5/5
+[done] pittsburgh  gap=72h  nrmse=0.862 stale=0.829  margin=+6.77%  won=5/5
+[preprocess] masked 7430/61971 implausible cells (11.99%) outside [0, 500] ug/m3 -> treated as not observed
+[preprocess] sensors: 21 -> 18 kept  (threshold=40% yearly coverage)
+[preprocess] dropped full-year duds (coverage): [('111391', 0.0), ('118085', 0.0), ('18625', 0.0)]
+[preprocess] observed cells: 49026/53118 (92.3%) -> only these can enter the loss; the rest are filled inputs (zero), never targets
+[wind] source=HRRR 3km (/Users/annaypodimatopoulou/Code/side_quests/nasa-sees/data/fresno_variants/fresno/wind_hrrr)
+[graph] set='urban'  nodes=18  edges=112  timesteps=2951  has_wind=True  has_temp=False
+[done] fresno      gap= 6h  nrmse=0.739 stale=0.312  margin=+8.17%  won=5/5
+[done] fresno      gap=12h  nrmse=0.739 stale=0.429  margin=+7.55%  won=5/5
+[done] fresno      gap=24h  nrmse=0.739 stale=0.502  margin=+7.19%  won=5/5
+[done] fresno      gap=48h  nrmse=0.739 stale=0.798  margin=+6.15%  won=5/5
+[done] fresno      gap=72h  nrmse=0.739 stale=0.922  margin=+4.90%  won=5/5
+[preprocess] masked 4379/87320 implausible cells (5.01%) outside [0, 500] ug/m3 -> treated as not observed
+[preprocess] sensors: 40 -> 36 kept  (threshold=40% yearly coverage)
+[preprocess] dropped full-year duds (coverage): [('112594', 0.0), ('129727', 0.0), ('34941', 0.081), ('199645', 0.209)]
+[preprocess] observed cells: 76530/78588 (97.4%) -> only these can enter the loss; the rest are filled inputs (zero), never targets
+[wind] source=HRRR 3km (/Users/annaypodimatopoulou/Code/side_quests/nasa-sees/data/slc/wind_hrrr)
+[graph] set='urban'  nodes=36  edges=228  timesteps=2183  has_wind=True  has_temp=False
+[done] slc         gap= 6h  nrmse=0.628 stale=0.250  margin=-2.97%  won=0/5
+[done] slc         gap=12h  nrmse=0.628 stale=0.361  margin=+1.98%  won=5/5
+[done] slc         gap=24h  nrmse=0.628 stale=0.411  margin=+3.26%  won=5/5
+[done] slc         gap=48h  nrmse=0.628 stale=0.536  margin=+1.79%  won=5/5
+[done] slc         gap=72h  nrmse=0.628 stale=0.667  margin=+2.30%  won=5/5
+
+[complete] -> experiments/logs/diagnostic/gap_points.csv
