@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""A/B channel-agreement QA -> a cleaned canonical Fresno set (data/fresno_dense_ab).
+"""A/B channel-agreement QA -> a cleaned canonical Fresno set (data/fresno_variants/fresno_dense_ab).
 
 PurpleAir sensors have TWO laser channels (pm2.5_atm_a / pm2.5_atm_b). On a healthy
 sensor they track almost perfectly (calibrated on 42327: corr 0.999, median |A-B|
@@ -8,10 +8,10 @@ average is untrustworthy. This is the QA GraPhy-grade pipelines apply that we co
 before (we only had the averaged atm).
 
 Inputs (same box/window/API, so time_stamps align):
-  data/fresno_dense/pm25/urban/*.csv  -> canonical (pm2.5_atm, pm2.5_cf_1, humidity)
-  data/fresno_ab/pm25/urban/*.csv     -> raw channels (pm2.5_atm_a, pm2.5_atm_b)
+  data/fresno_variants/fresno_dense/pm25/urban/*.csv  -> canonical (pm2.5_atm, pm2.5_cf_1, humidity)
+  data/fresno_variants/fresno_ab/pm25/urban/*.csv     -> raw channels (pm2.5_atm_a, pm2.5_atm_b)
 
-Output: data/fresno_dense_ab/ = fresno_dense with
+Output: data/fresno_variants/fresno_dense_ab/ = fresno_dense with
   - per-CELL: pm2.5_atm AND pm2.5_cf_1 blanked where the two channels grossly disagree
     (|A-B| > ABS and rel > REL), or one channel drops out (min~0 while max large) ->
     that hour becomes NOT observed downstream.
@@ -32,9 +32,9 @@ import pandas as pd
 REPO = Path(__file__).resolve().parents[1]
 DATA = REPO / "data"
 GROUP = "urban"
-SRC = DATA / "fresno_dense"
-AB = DATA / "fresno_ab"
-OUT = DATA / "fresno_dense_ab"
+SRC = DATA / "fresno_variants" / "fresno_dense"
+AB = DATA / "fresno_variants" / "fresno_ab"
+OUT = DATA / "fresno_variants" / "fresno_dense_ab"
 
 # per-CELL disagreement: BOTH an absolute and a relative gate must trip (healthy p95 =
 # 1.7 ug/m3 abs, 0.22 rel -> these are well clear of normal sensor noise).
@@ -107,11 +107,12 @@ def main() -> None:
                     help="min corr(healthy channel, city-median PM) to recover a sensor "
                          "as single-channel (default 0.85)")
     args = ap.parse_args()
-    src_dir = DATA / args.src
+    fvar = DATA / "fresno_variants"  # fresno city dirs are grouped under data/fresno_variants/
+    src_dir = fvar / args.src
     combined = args.ab == args.src  # a/b channels live in the same CSV as the canonical
-    out_dir = DATA / args.out_name
+    out_dir = fvar / args.out_name
     src_pm = src_dir / "pm25" / GROUP
-    ab_pm = (DATA / args.ab) / "pm25" / GROUP
+    ab_pm = (fvar / args.ab) / "pm25" / GROUP
     out_pm = out_dir / "pm25" / GROUP
     if not src_pm.exists():
         raise SystemExit(f"missing {src_pm}")

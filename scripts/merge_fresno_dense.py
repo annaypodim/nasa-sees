@@ -1,18 +1,18 @@
 #!/usr/bin/env python3
 """Merge the existing Fresno set with newly-fetched supplement sensors into
-data/fresno_dense (the density-matched set the winning eval runs on).
+data/fresno_variants/fresno_dense (the density-matched set the winning eval runs on).
 
 SUPPLEMENT philosophy: we never re-download the 33 sensors we already own; we
-only fetch NEW ones (scripts/fetch_purpleair.py --exclude-existing data/fresno
--> data/fresno_extra). This script unions the two by sensor id:
+only fetch NEW ones (scripts/fetch_purpleair.py --exclude-existing data/fresno_variants/fresno
+-> data/fresno_variants/fresno_extra). This script unions the two by sensor id:
 
-  pm25   = data/fresno/pm25/<grp>/*.csv  U  data/fresno_extra/pm25/<grp>/*.csv
+  pm25   = data/fresno_variants/fresno/pm25/<grp>/*.csv  U  data/fresno_variants/fresno_extra/pm25/<grp>/*.csv
   coords = union of both coords files, keyed by id, keeping ONLY ids that have a
            CSV present in the merged pm25 dir (guarantees coords<->pm25 consistency
            and never drops an existing sensor just because it went stale in the
            fresh sensor-list call).
 
-Idempotent: re-running rebuilds data/fresno_dense from the two source dirs.
+Idempotent: re-running rebuilds data/fresno_variants/fresno_dense from the two source dirs.
 """
 from __future__ import annotations
 
@@ -25,9 +25,9 @@ REPO = Path(__file__).resolve().parents[1]
 DATA = REPO / "data"
 GROUP = "urban"
 
-BASE = DATA / "fresno"          # the 33 we already own
-EXTRA = DATA / "fresno_extra"   # newly-fetched supplement sensors
-DENSE = DATA / "fresno_dense"   # merged output
+BASE = DATA / "fresno_variants" / "fresno"          # the 33 we already own
+EXTRA = DATA / "fresno_variants" / "fresno_extra"   # newly-fetched supplement sensors
+DENSE = DATA / "fresno_variants" / "fresno_dense"   # merged output
 
 COORD_RE = re.compile(r"\[\s*(\d+)\s*,\s*([-\d.]+)\s*,\s*([-\d.]+)\s*,\s*([-\d.]+)\s*\]")
 

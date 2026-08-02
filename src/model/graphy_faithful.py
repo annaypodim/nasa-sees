@@ -95,16 +95,18 @@ class ConvectionModule(nn.Module):
         super().__init__()
         self.node_mlp = _mlp(in_dim, dim, dim, dropout)  # transform x_i, x_j
         self.edge_mlp = _mlp(edge_in, dim, dim, dropout)  # raw [dist,w_A,w_v] -> dim
-        self.msg_mlp  = _mlp(dim, dim, dim, dropout)     # ResMessage
+        self.msg_mlp  = _mlp(2 * dim, dim, dim, dropout)  # ResMessage over BOTH endpoints
         self.upd_mlp  = _mlp(2 * dim, dim, dim, dropout)  # Update
 
     def forward(self, x, edge_index, edge_feat, edge_gate=None):
         src, dst = edge_index                           # message flows src(j) -> dst(i)
         h = self.node_mlp(x)                            # [N, dim]
         e = self.edge_mlp(edge_feat)                    # [E, dim]  -> next-layer edge feat
-        # ResMessage: edge feature ADDED (residually) to the neighbour node feature,
-        # then through the message MLP (paper: "edge feature is added to node features").
-        m = self.msg_mlp(h[src] + e)                    # [E, dim]
+        # ResMessage (paper Fig. 6): the edge feature is added to BOTH endpoint node
+        # features and the two are concatenated -> msg MLP. i=dst (target), j=src
+        # (neighbour): phi = MLP(concat[x_i + e, x_j + e]). Earlier we fed only x_j+e
+        # (source), dropping the target-node term -- this restores the published form.
+        m = self.msg_mlp(torch.cat([h[dst] + e, h[src] + e], dim=1))   # [E, 2*dim] -> dim
         # optional elevation gate: dampen the wind message across height (model.py parity)
         if edge_gate is not None:
             m = m * edge_gate[:, None]

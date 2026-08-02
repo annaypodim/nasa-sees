@@ -1,7 +1,0 @@
-[run] config=large steps=4000 maxpar=4 seeds=(0 1 2 3 4 5 6 7) -> faithful_logs/large_4000
-[run] launched seed 0 (pid 99880)
-[run] launched seed 1 (pid 99881)
-[run] launched seed 2 (pid 99882)
-[run] launched seed 3 (pid 99883)
-./run_graphy_faithful.sh: line 25: wait: -n: invalid option
-wait: usage: wait [n]

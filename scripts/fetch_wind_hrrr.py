@@ -46,7 +46,7 @@ COORDS = {
     "pittsburgh": ROOT / "data/pittsburgh/coords/pittsburgh_loc_elev.txt",
     "slc":        ROOT / "data/slc/coords/sensor_lat_long_alt",
     "boulder":    ROOT / "data/boulder/coords/sensor_lat_long_alt",
-    "fresno":     ROOT / "data/fresno/coords/sensor_lat_long_alt",
+    "fresno":     ROOT / "data/fresno_variants/fresno/coords/sensor_lat_long_alt",
 }
 _ROW = re.compile(
     r"\[\s*(\d+)\s*,\s*(-?\d+\.\d+)\s*,\s*(-?\d+\.\d+)\s*,\s*(-?\d+)\s*\]")

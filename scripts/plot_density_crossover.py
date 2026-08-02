@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Plot MAE(ours) vs MAE(IDW) against network density from the density sweep.
 
-Reads density_sweep_logs/results.csv (config,N,subsample_seed,ours_mae,ours_std,
+Reads experiments/logs/density_sweep/results.csv (config,N,subsample_seed,ours_mae,ours_std,
 idw_mae,idw_std), averages over subsample-seeds per (config,N), and draws one MAE-vs-N
 curve per OURS config plus the shared IDW baseline. Marks the crossover density where an
 OURS config drops below IDW (the publishable "GNN beats kriging in the sparse regime").
@@ -16,8 +16,8 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
 REPO = Path(__file__).resolve().parents[1]
-CSV = REPO / "density_sweep_logs" / "results.csv"
-OUT = REPO / "density_sweep_logs" / "density_crossover.png"
+CSV = REPO / "experiments/logs/density_sweep" / "results.csv"
+OUT = REPO / "experiments/logs/density_sweep" / "density_crossover.png"
 
 # CVD-safe: blue vs orange (max separation), IDW = neutral gray reference floor.
 C_KRIG, C_IDW_CFG, C_BASE = "#2a78d6", "#eb6834", "#8a8a86"

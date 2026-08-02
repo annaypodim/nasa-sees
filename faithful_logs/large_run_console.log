@@ -1,2 +1,0 @@
-[run] config=large steps=6000 seeds=(0 1 2 3 4 5 6 7) -> faithful_logs/large_6000
-[run] launched 8 seed processes: 42732 42733 42734 42735 42736 42737 42738 42739

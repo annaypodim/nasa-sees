@@ -1,6 +1,6 @@
 """Aggregate per-seed logs from eval_graphy_faithful.py (run one seed per process,
 in parallel) into the 8-seed mean +- std summary. Usage:
-    python scripts/aggregate_faithful.py faithful_logs/<run>/seed_*.log
+    python scripts/aggregate_faithful.py experiments/logs/faithful/<run>/seed_*.log
 """
 import re
 import sys
