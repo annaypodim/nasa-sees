@@ -54,13 +54,13 @@ titled_box(
     ax,
     40,
     40,
-    15,
-    15,
+    19,
+    19,
     "Graph\nconstruction",
-    f"kNN edges\n[dist, wind-along,\nΔelev]\nnodes\n[EPA-corrected PM₂.₅]",
+    "edges (kNN)\n[dist, wind-along, Δelev]\n\nnodes\n[EPA-corrected PM$_{2.5}$]",
     color=GRAY,
-    fs=9.5,
-    gap=0.18,
+    fs=8.2,
+    gap=0.24,
 )
 # collector bus: input stubs -> vertical rail -> single feed into graph box
 BUS = "#8a8a8a"
@@ -70,34 +70,35 @@ arrow(ax, (29.5, inp[-1][0]), (29.5, inp[0][0]), color=BUS, lw=1.2, style="-")
 arrow(ax, (29.5, 40), (32.4, 40), color=BUS, lw=1.4)
 
 # ================================================================ PRIOR band ==
-band(ax, 78, 47, 50, 30, color=GREEN, z=0, alpha=0.35)
-label(ax, 79, 60, "PHYSICS PRIOR", fs=10.5, weight="bold", color="#2f5e3a")
+band(ax, 78, 47, 56, 32, color=GREEN, z=0, alpha=0.35)
+label(ax, 79, 61, "PHYSICS PRIOR", fs=10.5, weight="bold", color="#2f5e3a")
 
 # spatial RK-elev
 titled_box(
     ax,
-    66,
+    65,
     52,
-    20,
-    10,
-    "regression kriging with elevation\n(RK-elev)",
-    "guess PM₂.₅ based on elevation\nẑ = (β₀ + β₁·elev) + IDW(residual)",
+    25,
+    11,
+    "regression kriging w/ elevation\n(RK-elev)",
+    "guess PM$_{2.5}$ from elevation\n"
+    r"$\hat z = (\beta_0 + \beta_1\,\mathrm{elev}) + \mathrm{IDW(resid)}$",
     color=GREEN,
-    fs=9.3,
+    fs=8.6,
     gap=0.26,
 )
 # temporal persistence
 titled_box(
     ax,
-    66,
-    40,
-    20,
-    8.5,
-    "Persistence",
-    "carry-forward last\nknown value\npersist",
+    65,
+    39.5,
+    25,
+    9,
+    "Persistence  (persist)",
+    "carry-forward each sensor's\nlast known value",
     color=GREEN,
-    fs=9.3,
-    gap=0.26,
+    fs=8.8,
+    gap=0.24,
 )
 # learnable blend
 titled_box(
@@ -114,12 +115,12 @@ titled_box(
     fs=9.3,
     gap=0.24,
 )
-arrow(ax, (76.2, 52), (84.0, 47.5), color=GREEN[0], lw=1.6)
-arrow(ax, (76.2, 40), (84.0, 44.5), color=GREEN[0], lw=1.6)
+arrow(ax, (77.8, 52), (84.0, 47.5), color=GREEN[0], lw=1.6)
+arrow(ax, (77.8, 39.5), (84.0, 44.5), color=GREEN[0], lw=1.6)
 
 # graph -> prior inputs
-arrow(ax, (47.6, 44), (55.8, 52), color=BUS, lw=1.3)
-arrow(ax, (47.6, 40), (55.8, 40), color=BUS, lw=1.3)
+arrow(ax, (49.8, 44), (52.2, 52), color=BUS, lw=1.3)
+arrow(ax, (49.8, 39), (52.2, 39.5), color=BUS, lw=1.3)
 
 # ============================================================ GNN CORRECTION ==
 band(ax, 79, 20, 46, 20, color=BLUE, z=0, alpha=0.22)
@@ -143,10 +144,10 @@ box(
     color=BLUE,
     fs=9.3,
 )
-arrow(ax, (47.6, 36), (61.8, 20), color=BUS, lw=1.3)
+arrow(ax, (49.8, 36), (61.8, 20), color=BUS, lw=1.3)
 
 # =================================================================== SUM ======
-box(ax, 115, 40, 9, 9, "concatenate", color=INK, fs=22, weight="bold")
+box(ax, 115, 40, 9, 9, "+", color=INK, fs=22, weight="bold")
 arrow(ax, (100.2, 46), (110.5, 41.2), color=GREEN[0], lw=2.0)  # prior ->
 arrow(ax, (96.2, 18), (110.5, 38.3), color=BLUE[0], lw=2.0)  # correction ->
 label(ax, 106, 45.5, "prior", fs=9, color=GREEN[0])
@@ -172,8 +173,8 @@ label(
     ax,
     79,
     6.5,
-    "ST-kriging baseline = PRIOR only (space+time interpolation, no GNN)"
-    "OURS = prior + GNN correction",
+    "ST-kriging baseline = PRIOR only (space+time interpolation, no GNN).   "
+    "OURS = prior + GNN correction.",
     fs=9.2,
     color="#555",
     style="italic",

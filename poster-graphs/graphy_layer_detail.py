@@ -93,20 +93,23 @@ def module(cx, color, name, edgetext, tag):
         ax, cx - 7, 40.0, 15, 6.5, e_title, e_body, color=color, fs=7.8, gap=0.28
     )
     label(ax, cx, 34.3, tag, fs=8, style="italic", color="#666")
-    # small 5-node graph glyph on the right, inside the band
-    gx = [cx + 4, cx + 11, cx + 7.5, cx + 4, cx + 11]
-    gy = [48.5, 47.5, 44, 40, 40.8]
-    for i, j in itertools.combinations(range(5), 2):
-        ax.plot(
-            [gx[i], gx[j]],
-            [gy[i], gy[j]],
-            "-",
-            color=color[0],
-            lw=0.6,
-            alpha=0.4,
-            zorder=4,
-        )
-    ax.plot(gx, gy, "o", ms=5, color=color[0], zorder=5)
+    # simplified feed-forward neural-net glyph on the right, inside the band:
+    # three columns of nodes (input -> hidden -> output), fully connected.
+    cols = [cx + 3.5, cx + 7.5, cx + 11.5]
+    sizes = [3, 4, 2]
+    top, bot = 47.6, 40.6
+    layers = []
+    for xcol, n in zip(cols, sizes):
+        ys = [top] if n == 1 else [top - (top - bot) * k / (n - 1) for k in range(n)]
+        layers.append([(xcol, yy) for yy in ys])
+    for a_layer, b_layer in zip(layers, layers[1:]):        # edges between layers
+        for (xa, ya) in a_layer:
+            for (xb, yb) in b_layer:
+                ax.plot([xa, xb], [ya, yb], "-", color=color[0], lw=0.4,
+                        alpha=0.35, zorder=4)
+    for lyr in layers:                                      # nodes on top
+        xs = [p[0] for p in lyr]; ys = [p[1] for p in lyr]
+        ax.plot(xs, ys, "o", ms=4.5, color=color[0], zorder=5)
 
 
 module(
@@ -144,7 +147,9 @@ box(
 )
 arrow(ax, (46, 26.7), (46, 32.9), color=GOLD[0], lw=1.4)  # -> diffusion
 arrow(ax, (60, 26.7), (60, 32.9), color=GOLD[0], lw=1.4)  # -> convection
-label(ax, 102, 23.5, "local stays ungated", fs=8, style="italic", color="#7a6a3a")
+ax.text(102, 28, "local stays ungated", ha="center", va="center", fontsize=8,
+        style="italic", color="#7a6a3a", zorder=6,
+        bbox=dict(facecolor="white", edgecolor="none", pad=1.5))
 
 # ---- module outputs -> softmax fusion -> residual ----
 outs = [
@@ -154,7 +159,9 @@ outs = [
 ]
 for cx, eq in outs:
     arrow(ax, (cx, 32.9), (cx, 16.3), color="#4a7a58", lw=1.6)
-    label(ax, cx, 19.5, eq, fs=9.5, color="#2f5e3a")
+    ax.text(cx, 18.6, eq, ha="center", va="center", fontsize=9.5,
+            color="#2f5e3a", zorder=6,
+            bbox=dict(facecolor="white", edgecolor="none", pad=2))
 
 titled_box(
     ax,
